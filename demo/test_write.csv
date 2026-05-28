@@ -1,0 +1,2 @@
+layer,table_name,table_comment,column_name,column_type,column_comment,code_values,relations,is_primary_key
+DM,dm_customer_active,test,cust_id,varchar(32),ok,,,true

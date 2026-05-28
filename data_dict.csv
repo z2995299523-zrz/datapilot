@@ -1,0 +1,55 @@
+layer,table_name,table_comment,column_name,column_type,column_comment,code_values,relations,is_primary_key
+DM,dm_customer_active,活跃客户汇总表,cust_id,varchar(32),客户编号,,,true
+DM,dm_customer_active,活跃客户汇总表,cust_name,varchar(64),客户姓名,,,
+DM,dm_customer_active,活跃客户汇总表,cust_status,varchar(2),客户状态,01=活跃; 02=休眠; 03=销户,,
+DM,dm_customer_active,活跃客户汇总表,last_trans_date,date,最近交易日期,,,
+DM,dm_customer_active,活跃客户汇总表,total_balance,"decimal(18,2)",当前总余额,,,
+DM,dm_customer_active,活跃客户汇总表,open_date,date,开户日期,,,
+DM,dm_customer_active,活跃客户汇总表,is_vip,varchar(1),VIP标志,1=是; 0=否,,
+DM,dm_channel_summary,渠道汇总表,channel_id,varchar(16),渠道编号,,,true
+DM,dm_channel_summary,渠道汇总表,channel_type,varchar(2),渠道类型,01=APP; 02=微信; 03=柜面; 04=网银,,
+DM,dm_channel_summary,渠道汇总表,channel_name,varchar(32),渠道名称,,,
+DM,dm_channel_summary,渠道汇总表,transaction_count,int,交易笔数,,,
+DM,dm_channel_summary,渠道汇总表,active_cust_count,int,活跃客户数,,,
+DM,dm_channel_summary,渠道汇总表,stat_date,date,统计日期,,,
+DM,dm_product_summary,产品汇总表,product_code,varchar(8),产品代码,,,true
+DM,dm_product_summary,产品汇总表,product_name,varchar(64),产品名称,,,
+DM,dm_product_summary,产品汇总表,product_type,varchar(2),产品类型,01=活期存款; 02=定期存款; 03=理财产品; 04=基金,dim_product.product_type,
+DM,dm_product_summary,产品汇总表,buy_count,int,购买笔数,,,
+DM,dm_product_summary,产品汇总表,total_amount,"decimal(18,2)",购买总金额,,,
+DM,dm_product_summary,产品汇总表,avg_amount,"decimal(18,2)",平均单笔金额,,,
+DM,dm_transaction_daily,交易日报表,trans_id,varchar(64),交易流水号,,,true
+DM,dm_transaction_daily,交易日报表,cust_id,varchar(32),客户编号,,dim_customer.cust_id,
+DM,dm_transaction_daily,交易日报表,trans_date,date,交易日期,,,
+DM,dm_transaction_daily,交易日报表,trans_amt,"decimal(18,2)",交易金额,,,
+DM,dm_transaction_daily,交易日报表,trans_type,varchar(2),交易类型,01=转入; 02=转出; 03=消费; 04=取现,,
+DM,dm_transaction_daily,交易日报表,channel_id,varchar(16),渠道编号,,dm_channel_summary.channel_id,
+DM,dm_transaction_daily,交易日报表,product_code,varchar(8),产品代码,,dm_product_summary.product_code,
+DWS,dws_cust_behavior_monthly,客户行为月汇总表,cust_id,varchar(32),客户编号,,,true
+DWS,dws_cust_behavior_monthly,客户行为月汇总表,stat_month,varchar(6),统计月份(YYYYMM),,,
+DWS,dws_cust_behavior_monthly,客户行为月汇总表,login_count,int,登录次数,,,
+DWS,dws_cust_behavior_monthly,客户行为月汇总表,transaction_count,int,交易次数,,,
+DWS,dws_cust_behavior_monthly,客户行为月汇总表,transaction_amount,"decimal(18,2)",交易总金额,,,
+DWS,dws_cust_behavior_monthly,客户行为月汇总表,last_login_date,date,最后登录日期,,,
+DWS,dws_cust_risk_rating,客户风险评级表,cust_id,varchar(32),客户编号,,,true
+DWS,dws_cust_risk_rating,客户风险评级表,risk_level,varchar(1),风险等级,1=低; 2=中低; 3=中; 4=中高; 5=高,,
+DWS,dws_cust_risk_rating,客户风险评级表,rating_date,date,评级日期,,,
+DWS,dws_cust_risk_rating,客户风险评级表,credit_score,int,信用评分(300-850),,,
+ODS,ods_customer_base,客户基础信息表,cust_id,varchar(32),客户编号,,,true
+ODS,ods_customer_base,客户基础信息表,cust_name,varchar(64),客户姓名,,,
+ODS,ods_customer_base,客户基础信息表,id_type,varchar(2),证件类型,01=身份证; 02=护照; 03=军官证,,
+ODS,ods_customer_base,客户基础信息表,id_number,varchar(32),证件号码,,,
+ODS,ods_customer_base,客户基础信息表,mobile,varchar(16),手机号,,,
+ODS,ods_customer_base,客户基础信息表,register_date,date,注册日期,,,
+ODS,ods_account_detail,账户明细表,account_id,varchar(32),账户编号,,,true
+ODS,ods_account_detail,账户明细表,cust_id,varchar(32),客户编号,,ods_customer_base.cust_id,
+ODS,ods_account_detail,账户明细表,account_type,varchar(2),账户类型,01=储蓄卡; 02=信用卡; 03=存折,,
+ODS,ods_account_detail,账户明细表,account_status,varchar(2),账户状态,01=正常; 02=冻结; 03=销户,,
+ODS,ods_account_detail,账户明细表,open_date,date,开户日期,,,
+ODS,ods_account_detail,账户明细表,close_date,date,销户日期,,,
+ODS,ods_transaction_log,交易日志表,log_id,varchar(64),日志ID,,,true
+ODS,ods_transaction_log,交易日志表,account_id,varchar(32),账户编号,,ods_account_detail.account_id,
+ODS,ods_transaction_log,交易日志表,trans_time,datetime,交易时间,,,
+ODS,ods_transaction_log,交易日志表,trans_amount,"decimal(18,2)",交易金额,,,
+ODS,ods_transaction_log,交易日志表,trans_currency,varchar(3),币种,CNY=人民币; USD=美元,,
+ODS,ods_transaction_log,交易日志表,counterparty,varchar(64),对手方信息,,,

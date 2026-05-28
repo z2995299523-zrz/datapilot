@@ -1,0 +1,17 @@
+# LLM
+openai>=1.0.0
+python-dotenv>=1.0.0
+
+# 结构化校验
+pydantic>=2.0.0
+
+# 数据字典
+pandas>=2.0.0
+openpyxl>=3.0.0
+
+# Embedding
+chromadb>=0.4.0
+sentence-transformers>=2.0.0
+
+# 工具
+tqdm>=4.0.0
