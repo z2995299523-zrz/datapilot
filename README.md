@@ -171,9 +171,9 @@ datapilot/
 | Phase 1 | Week 1-4 | 需求分析助手（概念→检索→伪代码） | ✅ 81 tests |
 | Phase 2 | Week 5-6 | LangChain 重构 + 脚本生成 + 基础测试 | ✅ 136 tests |
 | Phase 3 | Week 7-8 | 逻辑比对 + LangGraph 修复闭环 | ✅ 210 tests |
-| Phase 4 | Week 9-10 | LangSmith + Streamlit + Demo | ⬜ |
+| Phase 4 | Week 9-10 | LangSmith + Streamlit + Demo | ✅ |
 
-**当前: 8/10 周，210 tests**
+**当前: 10/10 周，210 tests**
 
 ---
 

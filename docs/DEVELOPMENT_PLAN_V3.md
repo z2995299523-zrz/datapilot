@@ -1,6 +1,6 @@
 # DataPilot 项目计划
 
-> **版本**: v3.0 | **更新**: 2026-05-30 | **进度**: 8/10 周 | **测试**: 210
+> **版本**: v3.0 | **更新**: 2026-05-30 | **进度**: 10/10 周 | **测试**: 210
 
 ---
 
@@ -11,7 +11,7 @@
 | Phase 1 | Week 1-4 | 需求分析助手（概念提取 → 分层检索 → 伪代码） | 81 | ✅ done |
 | Phase 2 | Week 5-6 | LangChain 重构 + SQL 生成 + 基础测试 | 136 | ✅ done |
 | Phase 3 | Week 7-8 | 逻辑比对 + LangGraph 修复闭环 | 210 | ✅ done |
-| Phase 4 | Week 9-10 | LangSmith + Streamlit + Demo | — | ⬜ pending |
+| Phase 4 | Week 9-10 | LangSmith + Streamlit + Demo | — | ✅ done |
 
 ---
 
@@ -123,13 +123,13 @@ prompt | llm | parser   (PydanticOutputParser 自动校验)
 
 ## 六、Phase 4: LangSmith + Streamlit + Demo（Week 9-10）
 
-| 任务 | 产出 |
-|------|------|
-| LangSmith 全链路 trace 配置 | 环境变量配置，自动 trace |
-| Streamlit WebUI | 上传字典 → 建索引 → 上传需求 → 查看报告 |
-| 端到端集成测试 | 3 个真实场景 |
-| Demo 场景 + 录制 | 完整操作流程 |
-| README 完善 | 架构图 + Demo 展示 + 面试话术 |
+| 任务 | 产出 | 状态 |
+|------|------|------|
+| LangSmith 全链路 trace 配置 | `.env.example` 环境变量配置，自动 trace | ✅ |
+| Streamlit WebUI | `ui/app.py` 三页应用：字典管理 / 需求分析 / 修复闭环 | ✅ |
+| 端到端集成测试 | 3 个真实场景 | ⬜ 待续 |
+| Demo 场景 + 录制 | 完整操作流程 | ⬜ 待续 |
+| README 完善 | 架构图 + Demo 展示 + 面试话术 | ⬜ 待续 |
 
 ---
 
