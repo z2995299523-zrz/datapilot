@@ -3,6 +3,12 @@ DataPilot Streamlit WebUI — 数据需求分析全链路可视化
 
 用法: streamlit run ui/app.py
 """
+import sys
+from pathlib import Path
+
+# Streamlit 运行时 sys.path 只包含 ui/ 目录，需要加项目根目录才能导入 config 等模块
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import streamlit as st
 import os
 
