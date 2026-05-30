@@ -6,7 +6,7 @@
 [![LangChain](https://img.shields.io/badge/LangChain-1.x-green.svg)](https://www.langchain.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-1.x-orange.svg)](https://www.langchain.com/langgraph)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-latest-purple.svg)](https://www.trychroma.com/)
-[![Tests](https://img.shields.io/badge/tests-101-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-210-brightgreen.svg)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
 ---
@@ -141,6 +141,7 @@ datapilot/
 │   └── script.py             # SQL 脚本生成（规则引擎）
 │
 ├── testing/                  # 三层测试（Phase 3）
+│   ├── llm_tester.py         # 统一 LLM 测试代码生成
 │   ├── quality.py            # L1: 基础数据质量
 │   ├── comparison.py         # L2: 逻辑结果比对
 │   └── diagnosis.py          # L3: 诊断引擎
@@ -158,7 +159,7 @@ datapilot/
 │   ├── data_dict.csv         # 示例数据字典
 │   └── req_sample.txt        # 示例需求文档
 │
-└── tests/                    # 101 tests
+└── tests/                    # 210 tests
 ```
 
 ---
@@ -168,11 +169,11 @@ datapilot/
 | Phase | 周期 | 目标 | 状态 |
 |-------|------|------|------|
 | Phase 1 | Week 1-4 | 需求分析助手（概念→检索→伪代码） | ✅ 81 tests |
-| Phase 2 | Week 5-6 | LangChain 重构 + 脚本生成 + 基础测试 | 🔄 W5 done |
-| Phase 3 | Week 7-8 | 逻辑比对 + LangGraph 修复闭环 | ⬜ |
+| Phase 2 | Week 5-6 | LangChain 重构 + 脚本生成 + 基础测试 | ✅ 136 tests |
+| Phase 3 | Week 7-8 | 逻辑比对 + LangGraph 修复闭环 | ✅ 210 tests |
 | Phase 4 | Week 9-10 | LangSmith + Streamlit + Demo | ⬜ |
 
-**当前: 5/10 周，101 tests**
+**当前: 8/10 周，210 tests**
 
 ---
 

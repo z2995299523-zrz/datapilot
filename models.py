@@ -143,3 +143,45 @@ class AnalysisReport(BaseModel):
     concepts: list[BusinessConcept] = Field(default_factory=list)
     retrieval: RetrievalResult = Field(default_factory=RetrievalResult)
     pseudocode: Optional[PseudoCode] = None
+
+
+# ============================================================================
+# LLM 诊断响应模型（L3 → LLM 输出校验）
+# ============================================================================
+
+class LLMDiagnosisItem(BaseModel):
+    """LLM 返回的单条诊断"""
+    severity: str = "medium"
+    source: str = ""
+    symptom: str = ""
+    root_cause: str = ""
+    impact: str = ""
+    fix_suggestion: str = ""
+    prevention: str = ""
+    affected_columns: list[str] = Field(default_factory=list)
+    is_auto_fixable: bool = False
+
+
+class LLMDiagnosisResponse(BaseModel):
+    """LLM 诊断响应 — Pydantic 强校验"""
+    items: list[LLMDiagnosisItem] = Field(default_factory=list)
+
+
+# ============================================================================
+# LLM 测试代码生成响应模型
+# ============================================================================
+
+class LLMTestCase(BaseModel):
+    """LLM 生成的单条测试"""
+    check_type: str = Field(..., description="检查类型: pk_uniqueness/null_rate/field_length/code_compliance/business_rule/aggregation/boundary")
+    column_name: str = Field(default="", description="检查的列名")
+    description: str = Field(default="", description="这条测试在检查什么")
+    test_sql: str = Field(..., description="可执行的测试 SQL（只返回违规行）")
+    expected_behavior: str = Field(default="", description="通过条件")
+
+
+class LLMTestSuiteResponse(BaseModel):
+    """LLM 生成的完整测试套件"""
+    suite_description: str = Field(default="", description="测试套件概述")
+    test_cases: list[LLMTestCase] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list, description="补充说明")

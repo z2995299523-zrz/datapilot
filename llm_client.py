@@ -38,6 +38,60 @@ def get_chat_model() -> ChatOpenAI:
     return _chat_model
 
 
+def chat_text(
+    system_prompt: str,
+    user_message: str,
+    *,
+    model: str = LLM_MODEL,
+    temperature: float = LLM_TEMPERATURE,
+    max_retry: int = LLM_MAX_RETRY,
+    callbacks: list | None = None,
+) -> str:
+    """调用 LLM 并返回纯文本（不强制 JSON）
+
+    用于 SQL 修复等不需要结构化输出的场景。
+    有 retry 但不要求 JSON 格式。
+
+    Args:
+        callbacks: LangChain callbacks 列表（TokenTracker, AuditLogger 等）
+
+    Raises:
+        RuntimeError: 超过最大重试次数
+    """
+    client = _get_client()
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+    last_error = None
+    for attempt in range(1, max_retry + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            )
+            content = response.choices[0].message.content
+
+            # 触发 callbacks
+            if callbacks:
+                _notify_callbacks(callbacks, messages, content, model)
+
+            return content.strip() if content else ""
+        except Exception as e:
+            last_error = e
+            if callbacks:
+                _notify_callbacks_error(callbacks, e)
+            if attempt < max_retry:
+                messages.append({
+                    "role": "user",
+                    "content": f"上次调用失败: {e}。请重试。"
+                })
+
+    raise RuntimeError(f"LLM 文本调用失败（重试 {max_retry} 次）: {last_error}")
+
+
 def chat_json(
     system_prompt: str,
     user_message: str,
@@ -45,8 +99,12 @@ def chat_json(
     model: str = LLM_MODEL,
     temperature: float = LLM_TEMPERATURE,
     max_retry: int = LLM_MAX_RETRY,
+    callbacks: list | None = None,
 ) -> dict:
     """调用 LLM 并强制返回 JSON
+
+    Args:
+        callbacks: LangChain callbacks 列表（TokenTracker, AuditLogger 等）
 
     Raises:
         RuntimeError: 超过最大重试次数仍无法解析 JSON
@@ -67,9 +125,17 @@ def chat_json(
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
-            return json.loads(content)
+            result = json.loads(content)
+
+            # 触发 callbacks
+            if callbacks:
+                _notify_callbacks(callbacks, messages, content, model)
+
+            return result
         except (json.JSONDecodeError, Exception) as e:
             last_error = e
+            if callbacks:
+                _notify_callbacks_error(callbacks, e)
             if attempt < max_retry:
                 messages.append({
                     "role": "user",
@@ -77,3 +143,30 @@ def chat_json(
                 })
 
     raise RuntimeError(f"LLM 调用失败（重试 {max_retry} 次）: {last_error}")
+
+
+def _notify_callbacks(callbacks: list, messages: list, content: str, model: str):
+    """通知 callbacks（TokenTracker/AuditLogger 的简化集成）"""
+    for cb in callbacks:
+        try:
+            if hasattr(cb, "on_llm_end"):
+                # 构造一个简化的响应对象
+                class _FakeResponse:
+                    pass
+                resp = _FakeResponse()
+                resp.llm_output = {}
+                resp.generations = [[_FakeResponse()]]
+                resp.generations[0][0].text = content
+                cb.on_llm_end(resp)
+        except Exception:
+            pass
+
+
+def _notify_callbacks_error(callbacks: list, error: Exception):
+    """通知 callbacks 发生错误"""
+    for cb in callbacks:
+        try:
+            if hasattr(cb, "on_llm_error"):
+                cb.on_llm_error(error)
+        except Exception:
+            pass

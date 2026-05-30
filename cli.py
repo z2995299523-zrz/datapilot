@@ -51,7 +51,7 @@ def _load_or_rebuild(dict_path: str, rebuild: bool = False):
     return collection
 
 
-def _format_markdown(result, pseudocode=None, verbose=False):
+def _format_markdown(result, pseudocode=None, verbose=False, sql=None):
     """格式化输出 Markdown"""
     lines = []
 
@@ -143,10 +143,19 @@ def _format_markdown(result, pseudocode=None, verbose=False):
                 lines.append(f"- {note}")
             lines.append("")
 
+    # SQL 输出
+    if sql:
+        lines.append("## 生成 SQL")
+        lines.append("")
+        lines.append("```sql")
+        lines.append(sql.rstrip())
+        lines.append("```")
+        lines.append("")
+
     return "\n".join(lines)
 
 
-def _to_json(result, pseudocode=None):
+def _to_json(result, pseudocode=None, sql=None):
     """序列化为 JSON"""
     retrieval = result["retrieval"]
     output = {
@@ -205,6 +214,9 @@ def _to_json(result, pseudocode=None):
             "todo_items": pseudocode.todo_items,
             "notes": pseudocode.notes,
         }
+
+    if sql:
+        output["sql"] = sql
 
     return json.dumps(output, ensure_ascii=False, indent=2)
 
@@ -265,27 +277,38 @@ def cmd_analyze(args):
     from extractor.concept import extract_concepts
     from retrieval.engine import search
     from generator.pseudocode import generate
+    from generator.script import generate_sql
+    from dictionary.loader import load_dictionary
 
     _check_api_key()
 
     req_text = Path(args.req).read_text(encoding="utf-8")
     collection = _load_or_rebuild(args.dict, args.rebuild)
 
-    print("步骤 1/3: 提取业务概念...")
+    total_steps = 4 if args.sql else 3
+
+    print(f"步骤 1/{total_steps}: 提取业务概念...")
     extraction = extract_concepts(req_text)
 
-    print("步骤 2/3: 分层检索...")
+    print(f"步骤 2/{total_steps}: 分层检索...")
     result = search(extraction.concepts, collection)
 
-    print("步骤 3/3: 生成伪代码...")
+    print(f"步骤 3/{total_steps}: 生成伪代码...")
     pseudocode = generate(req_text, result, extraction.concepts)
+
+    sql = None
+    if args.sql:
+        print(f"步骤 4/{total_steps}: 生成 SQL 脚本...")
+        data_dict = load_dictionary(args.dict)
+        tables = {t.table_name: t for t in data_dict.tables}
+        sql = generate_sql(pseudocode, tables)
 
     if args.output == "json":
         payload = {
             "concepts": extraction.concepts,
             "retrieval": result,
         }
-        print(_to_json(payload, pseudocode))
+        print(_to_json(payload, pseudocode, sql))
         return
 
     # Markdown 输出
@@ -293,7 +316,7 @@ def cmd_analyze(args):
         "concepts": extraction.concepts,
         "retrieval": result,
     }
-    md = _format_markdown(payload, pseudocode, verbose=args.verbose)
+    md = _format_markdown(payload, pseudocode, verbose=args.verbose, sql=sql)
     print(md)
 
 
@@ -305,8 +328,9 @@ def main():
 示例:
   python cli.py search --req demo/req_sample.txt
   python cli.py analyze --req demo/req_sample.txt
+  python cli.py analyze --req demo/req_sample.txt --sql
   python cli.py analyze --req demo/req_sample.txt --output json --rebuild
-  python cli.py analyze --req demo/req_sample.txt --verbose
+  python cli.py analyze --req demo/req_sample.txt --sql --verbose
         """,
     )
     sub = parser.add_subparsers(dest="command")
@@ -320,11 +344,12 @@ def main():
     p_search.add_argument("--verbose", "-v", action="store_true", help="显示详细检索日志")
 
     # analyze
-    p_analyze = sub.add_parser("analyze", help="完整链路: 概念提取→检索→伪代码")
+    p_analyze = sub.add_parser("analyze", help="完整链路: 概念提取→检索→伪代码→SQL")
     p_analyze.add_argument("--req", "-r", required=True, help="需求文档路径 (.txt)")
     p_analyze.add_argument("--dict", "-d", default="demo/data_dict.csv", help="数据字典路径")
     p_analyze.add_argument("--rebuild", action="store_true", help="强制重建 ChromaDB 索引")
     p_analyze.add_argument("--output", "-o", choices=["text", "json"], default="text", help="输出格式")
+    p_analyze.add_argument("--sql", action="store_true", help="生成最终 SQL 脚本")
     p_analyze.add_argument("--verbose", "-v", action="store_true", help="显示详细检索日志")
 
     args = parser.parse_args()
