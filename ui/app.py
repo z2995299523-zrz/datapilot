@@ -9,6 +9,12 @@ from pathlib import Path
 # Streamlit 运行时 sys.path 只包含 ui/ 目录，需要加项目根目录才能导入 config 等模块
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# 🔧 预加载 BGE embedding 模型（必须在 langchain_openai 之前）
+#   langchain_openai 的 httpx 线程初始化会与 PyTorch CUDA 冲突，
+#   导致 SentenceTransformer 在 CUDA 设备上加载时 segfault (exit 139)
+from embedding import get_embedding_model
+get_embedding_model()
+
 import streamlit as st
 import os
 

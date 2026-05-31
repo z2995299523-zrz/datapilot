@@ -11,6 +11,12 @@ import json
 import sys
 from pathlib import Path
 
+# 🔧 预加载 BGE embedding 模型（必须在 langchain_openai 之前）
+#   langchain_openai 的 httpx 线程初始化会与 PyTorch CUDA 冲突，
+#   导致 SentenceTransformer 在 CUDA 设备上加载时 segfault (exit 139)
+from embedding import get_embedding_model
+get_embedding_model()
+
 from config import CHROMA_DIR, LLM_API_KEY
 
 
