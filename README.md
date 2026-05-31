@@ -110,7 +110,32 @@ python cli.py search --req demo/req_sample.txt --verbose
 
 # 完整链路（概念 → 检索 → 伪代码）
 python cli.py analyze --req demo/req_sample.txt --verbose
+
+# 生成 SQL
+python cli.py analyze --req demo/req_sample.txt --sql
 ```
+
+### 5. 启动 WebUI
+
+```bash
+streamlit run ui/app.py
+# 打开 http://localhost:8501
+```
+
+> ⚠ **已知问题**: BGE embedding 模型必须在 `langchain_openai` 之前加载，否则 PyTorch CUDA 与 httpx 冲突导致 segfault。`cli.py` 和 `ui/app.py` 已处理，自行编写脚本时请注意加载顺序。
+
+---
+
+## Demo 演示
+
+面试展示用 15 分钟演示脚本：[docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
+
+涵盖三个场景：
+1. **需求分析全链路** — 输入需求 → 概念提取 → 检索 → 伪代码 → SQL
+2. **修复闭环** — L1/L2/L3 测试 → 诊断 → 自动修复 → 重测
+3. **端到端** — 上传自定义字典 → 完整流程
+
+> 🎬 Demo GIF 占位：待录制后补充
 
 ---
 
