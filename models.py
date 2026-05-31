@@ -77,6 +77,8 @@ class ConceptExtractionResult(BaseModel):
     """概念提取结果"""
     concepts: list[BusinessConcept] = Field(default_factory=list)
     raw_requirement: str = Field(default="")
+    llm_error: str = Field(default="", description="LLM 调用失败时的错误信息")
+    llm_token_usage: dict = Field(default_factory=dict, description="Token 使用统计")
 
 
 # ============================================================================
@@ -143,6 +145,54 @@ class AnalysisReport(BaseModel):
     concepts: list[BusinessConcept] = Field(default_factory=list)
     retrieval: RetrievalResult = Field(default_factory=RetrievalResult)
     pseudocode: Optional[PseudoCode] = None
+
+
+# ============================================================================
+# 断言模型 — 业务概念 → SQL 条件翻译
+# ============================================================================
+
+class AssertionType(str, Enum):
+    CODE = "code"              # 码值条件: cust_status = '01'
+    TIME = "time"              # 时间条件: trans_date >= '2025-01-01'
+    AGG = "aggregation"        # 聚合条件: SUM(txn_amt)
+
+
+class Assertion(BaseModel):
+    """业务概念到 SQL 条件的确定性格言"""
+    type: AssertionType
+    column: str = ""
+    operator: str = "="                    # SQL operator: =, >=, <=, IN, BETWEEN
+    value: str = ""                         # Literal value or SQL expression
+    concept_source: str = ""                # Source concept name
+    table: str = ""                         # Target table
+    confidence: float = 0.0                 # Match confidence 0-1
+    sql_condition: str = ""                 # Pre-compiled SQL WHERE clause
+
+
+# ============================================================================
+# 预期结果比对模型 (L2.5)
+# ============================================================================
+
+class ValueDiff(BaseModel):
+    """逐行逐列的数值差异"""
+    key_values: str = ""                     # 对齐键值，如 "分行3"
+    column: str = ""                          # 差异列名
+    expected_value: str = ""                  # 预期值
+    actual_value: str = ""                    # 实际值
+    diff_percent: float = 0.0                 # 偏差百分比
+
+
+class ExpectedComparisonReport(BaseModel):
+    """预期结果比对报告"""
+    total_expected: int = 0
+    total_actual: int = 0
+    match_count: int = 0
+    mismatch_count: int = 0
+    missing_in_actual: list[str] = Field(default_factory=list)  # 预期有、实际无
+    extra_in_actual: list[str] = Field(default_factory=list)    # 实际有、预期无
+    value_diffs: list[ValueDiff] = Field(default_factory=list)   # 数值偏差
+    overall_passed: bool = True
+    summary: str = ""
 
 
 # ============================================================================

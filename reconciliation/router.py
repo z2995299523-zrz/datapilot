@@ -30,10 +30,15 @@ def after_run_tests(state: ReconciliationState) -> str:
 
 
 def after_diagnose(state: ReconciliationState) -> str:
-    """诊断完成后的路由
+    """诊断完成后的路由 — 区分语法错误和语义错误
+
+    路由规则:
+      - 全是语法错误且 is_auto_fixable → "auto_fix"
+      - 包含语义错误 → "reanalyze"
+      - 无自动修复项 → "manual_report"
 
     Returns:
-        "auto_fix" 或 "manual_report"
+        "auto_fix" / "reanalyze" / "manual_report"
     """
     diag_json = state.get("diagnosis_report_json", "")
     if not diag_json:
@@ -45,12 +50,23 @@ def after_diagnose(state: ReconciliationState) -> str:
     except Exception:
         return "manual_report"
 
+    if not items:
+        return "manual_report"
+
     # 检查是否有可自动修复的项
     auto_fixable = [it for it in items if it.get("is_auto_fixable")]
-    if auto_fixable:
-        return "auto_fix"
+    if not auto_fixable:
+        # 无可自动修复项 → 检查是否有语义错误（需要重新分析）
+        has_semantic = any(
+            it.get("fix_level") == "semantic"
+            for it in items
+        )
+        if has_semantic:
+            return "reanalyze"
+        return "manual_report"
 
-    return "manual_report"
+    # 有可自动修复项 → 语法错误走 auto_fix
+    return "auto_fix"
 
 
 def after_retest(state: ReconciliationState) -> str:

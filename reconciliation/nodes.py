@@ -261,6 +261,95 @@ def retest_node(state: ReconciliationState) -> dict[str, Any]:
     }
 
 
+def reanalyze_node(state: ReconciliationState) -> dict[str, Any]:
+    """语义错误时重新分析：使用诊断反馈重新生成伪代码和 SQL
+
+    当 Diagnoser 判断错误类型为 semantic（表选错/JOIN错/口径错）时，
+    不能靠正则替换修复。需要回到需求分析阶段，用诊断反馈重新生成。
+
+    Returns:
+        包含 new_sql 和更新后 loop_count 的 dict
+    """
+    from generator.pseudocode import generate
+    from generator.script import generate_sql
+
+    requirement_text = state.get("requirement_text", "")
+    original_sql = state.get("original_sql", "")
+    diag_json = state.get("diagnosis_report_json", "")
+    loop = state.get("loop_count", 0)
+    max_loops = state.get("max_loops", 3)
+
+    if loop >= max_loops:
+        return {
+            "status": "failed",
+            "error_message": f"语义错误重分析超过最大重试次数 ({max_loops})",
+            "loop_count": loop + 1,
+        }
+
+    # ── 构建增强的需求文本（注入诊断反馈） ──
+    diagnosis_context = ""
+    try:
+        diag_data = json.loads(diag_json)
+        items = diag_data.get("items", [])
+        semantic_items = [it for it in items if it.get("fix_level") == "semantic"]
+        if semantic_items:
+            diagnosis_context = "\n\n## 上一轮 SQL 的诊断反馈（请据此修正分析）\n"
+            for item in semantic_items:
+                diagnosis_context += f"- {item.get('symptom', '')} → {item.get('root_cause', '')}\n"
+                diagnosis_context += f"  修复建议: {item.get('fix_suggestion', '')}\n"
+    except Exception:
+        pass
+
+    enhanced_requirement = requirement_text + diagnosis_context
+
+    # ── 重新生成伪代码 ──
+    try:
+        # 用空集合做检索（简化版；生产环境应从检索结果恢复完整上下文）
+        from models import RetrievalResult
+        empty_retrieval = RetrievalResult()
+        new_pseudocode = generate(enhanced_requirement, empty_retrieval)
+    except Exception:
+        # 生成失败 → 回退到原始 SQL + 人工报告
+        return {
+            "status": "manual_fix_needed",
+            "error_message": "语义重分析失败：伪代码生成异常。请人工介入。",
+            "loop_count": loop + 1,
+        }
+
+    # ── 重新生成 SQL ──
+    try:
+        new_sql = generate_sql(new_pseudocode)
+    except Exception:
+        return {
+            "status": "manual_fix_needed",
+            "error_message": "语义重分析失败：SQL 生成异常。请人工介入。",
+            "loop_count": loop + 1,
+        }
+
+    # ── 更新 fix_history ──
+    fix_history = []
+    try:
+        fix_history = json.loads(state.get("fix_history_json", "[]"))
+    except Exception:
+        pass
+    fix_history.append({
+        "type": "reanalyze",
+        "sql_before": original_sql,
+        "sql_after": new_sql,
+        "diagnosis_summary": diagnosis_context[:500],
+    })
+
+    return {
+        "original_sql": new_sql,
+        "loop_count": loop + 1,
+        "fix_history_json": json.dumps(fix_history, ensure_ascii=False),
+        "quality_report_json": "",
+        "comparison_report_json": "",
+        "diagnosis_report_json": "",
+        "status": "running",
+    }
+
+
 # ============================================================================
 # LLM SQL 修复
 # ============================================================================

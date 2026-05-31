@@ -179,6 +179,15 @@ class TestPseudocodeGeneration:
         assert "dm_customer_active" in source_tables
         assert "dm_channel_summary" in source_tables
 
+    def test_llm_failure_graceful_degradation(self, sample_retrieval):
+        """LLM 调用失败 → 返回空 steps 的 PseudoCode"""
+        with mock.patch("generator.pseudocode.chat_json", side_effect=RuntimeError("LLM 超时")):
+            result = generate("测试需求", sample_retrieval)
+        assert isinstance(result, PseudoCode)
+        assert len(result.steps) == 0
+        assert len(result.todo_items) > 0
+        assert "LLM 调用失败" in result.title
+
 
 class TestCliImport:
     """CLI 模块基本导入检查"""

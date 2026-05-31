@@ -142,11 +142,100 @@ def match_layer(
                 )
 
     # Step 3: 对每个匹配到的表，获取所有字段
-    result = []
-    for table_name, match in matched_tables.items():
+    for table_name in matched_tables:
+        match = matched_tables[table_name]
         match.columns = _get_table_columns(collection, layer, table_name)
-        result.append(match)
 
-    # 按分数降序
-    result.sort(key=lambda m: m.score, reverse=True)
-    return result
+    return sorted(matched_tables.values(), key=lambda m: m.score, reverse=True)[:top_k]
+
+
+def match_layer_hybrid(
+    concept: BusinessConcept,
+    collection: chromadb.Collection,
+    layer: str,
+    db_conn=None,
+    top_k: int = RETRIEVAL_TOP_K,
+    threshold: float = RETRIEVAL_THRESHOLD,
+) -> list[TableMatch]:
+    """混合检索：优先 information_schema 精确匹配，ChromaDB 语义兜底
+
+    当有数据库连接时，先尝试在 information_schema 中做精确匹配。
+    命中直接返回（score=1.0），不触发语义检索。
+    失败或无连接时 fallback 到现有 ChromaDB 检索。
+
+    Args:
+        db_conn: 可选数据库连接，用于 information_schema 查询
+    """
+    # Phase 1: information_schema 精确匹配（优先）
+    if db_conn is not None:
+        try:
+            exact = _exact_match_via_db(concept, db_conn, layer)
+            if exact:
+                exact.columns = _get_table_columns(collection, layer, exact.table_name)
+                return [exact]
+        except Exception:
+            pass  # DB 查询失败，fallback 到 ChromaDB
+
+    # Phase 2: 现有 ChromaDB 检索（exact + semantic）
+    return match_layer(concept, collection, layer, top_k=top_k, threshold=threshold)
+
+
+def _exact_match_via_db(
+    concept: BusinessConcept,
+    conn,
+    layer: str,
+) -> TableMatch | None:
+    """在 information_schema 中做精确匹配
+
+    Args:
+        conn: 数据库连接
+        layer: 数据层级 (DM/DWS/ODS)
+    """
+    import sqlite3
+
+    keywords = [concept.concept] + concept.candidates
+    patterns = []
+    for kw in keywords:
+        safe = kw.replace("'", "''")
+        patterns.append(f"'{safe}'")
+
+    if not patterns:
+        return None
+
+    # 表名 + 列名 + 注释 triple 匹配
+    where_parts = []
+    for p in patterns:
+        where_parts.append(
+            f"(LOWER(COLUMN_NAME) LIKE '%' || LOWER({p}) || '%' "
+            f"OR LOWER(TABLE_NAME) LIKE '%' || LOWER({p}) || '%' "
+            f"OR LOWER(COLUMN_COMMENT) LIKE '%' || LOWER({p}) || '%')"
+        )
+
+    sql = f"""
+    SELECT DISTINCT TABLE_NAME, TABLE_COMMENT
+    FROM information_schema.columns
+    WHERE TABLE_SCHEMA = '{layer}'
+      AND ({" OR ".join(where_parts)})
+    LIMIT 1
+    """
+
+    try:
+        if hasattr(conn, "exec_driver_sql"):
+            result = conn.exec_driver_sql(sql).fetchone()
+        else:
+            result = conn.execute(sql).fetchone()
+
+        if result:
+            return TableMatch(
+                concept=concept.concept,
+                matched=True,
+                layer=DataLayer(layer),
+                table_name=result[0],
+                table_comment=result[1] if len(result) > 1 else "",
+                score=1.0,
+                message=f"information_schema 精确匹配: {concept.concept} → {result[0]}",
+            )
+    except Exception:
+        pass
+
+    return None

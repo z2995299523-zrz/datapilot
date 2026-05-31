@@ -47,6 +47,7 @@ class DiagnosisItem(BaseModel):
     prevention: str = ""                   # 预防措施
     affected_columns: list[str] = Field(default_factory=list)
     is_auto_fixable: bool = False          # 是否可自动修复
+    fix_level: str = ""                    # "syntax" | "semantic" | ""
 
 
 class DiagnosisReport(BaseModel):
@@ -86,6 +87,7 @@ DIAGNOSIS_RULES: dict[str, dict] = {
         "prevention": "在 script.py 生成 SQL 时强制校验：每出现一个 JOIN 关键字，"
                       "必须紧跟 ON 条件，否则拒绝生成",
         "auto_fixable": False,
+        "fix_level": "semantic",
     },
     "pk_uniqueness": {
         "severity": Severity.HIGH,
@@ -97,6 +99,7 @@ DIAGNOSIS_RULES: dict[str, dict] = {
         "prevention": "伪代码生成阶段确认每个 JOIN 的基数关系（1:1, 1:N, N:M），"
                       "对 N:M 关系自动加去重步骤",
         "auto_fixable": False,
+        "fix_level": "semantic",
     },
     "null_rate": {
         "severity": Severity.MEDIUM,
@@ -138,6 +141,7 @@ DIAGNOSIS_RULES: dict[str, dict] = {
                "2) 检查 WHERE 条件和 JOIN 条件是否正确",
         "prevention": "伪代码生成时标注每步预期的行数变化方向（↑/↓/=）",
         "auto_fixable": False,
+        "fix_level": "semantic",
     },
     "full_diff": {
         "severity": Severity.HIGH,
@@ -149,6 +153,7 @@ DIAGNOSIS_RULES: dict[str, dict] = {
                "3) 检查是否遗漏了码值 JOIN（如 status→status_name 映射）",
         "prevention": "关键指标列在伪代码中标注计算公式，生成 SQL 后自动校验公式一致性",
         "auto_fixable": False,
+        "fix_level": "semantic",
     },
     "aggregation": {
         "severity": Severity.HIGH,
@@ -161,6 +166,7 @@ DIAGNOSIS_RULES: dict[str, dict] = {
                "3) 检查汇总表的数据时效",
         "prevention": "在伪代码中显式标注聚合口径（是否去重、是否包含 NULL），生成 SQL 时保持一致",
         "auto_fixable": False,
+        "fix_level": "semantic",
     },
     "schema": {
         "severity": Severity.HIGH,
@@ -171,6 +177,7 @@ DIAGNOSIS_RULES: dict[str, dict] = {
                "2) 检查伪代码的 output 字段是否完整",
         "prevention": "在伪代码→SQL 转换时自动校验：所有 output 列都出现在 SELECT 中",
         "auto_fixable": True,
+        "fix_level": "syntax",
     },
 }
 
@@ -244,6 +251,7 @@ def _apply_rule(
         prevention=rule["prevention"],
         affected_columns=affected,
         is_auto_fixable=rule["auto_fixable"],
+        fix_level=rule.get("fix_level", ""),
     )
 
 
@@ -276,6 +284,7 @@ def diagnose(
     comparison_report: ComparisonReport | None = None,
     requirement_text: str = "",
     pseudocode_text: str = "",
+    expected_report=None,
 ) -> DiagnosisReport:
     """LLM 诊断 — LLM 主路径 + 规则引擎 fallback
 
@@ -290,6 +299,7 @@ def diagnose(
         comparison_report: L2 比对报告
         requirement_text: 原始需求文档
         pseudocode_text: 伪代码文本
+        expected_report: L2.5 预期比对报告 (ExpectedComparisonReport 或 None)
 
     Returns:
         DiagnosisReport
@@ -304,8 +314,11 @@ def diagnose(
         from llm_client import chat_json
         from extractor.prompts import build_diagnosis_prompt
         from models import LLMDiagnosisResponse
+        from callbacks.token_tracker import TokenTracker
 
-        context = _build_llm_context(quality_report, comparison_report, requirement_text, pseudocode_text)
+        context = _build_llm_context(quality_report, comparison_report,
+                                     requirement_text, pseudocode_text,
+                                     expected_report)
 
         prompt = build_diagnosis_prompt()
         messages = prompt.format_messages(context=context)
@@ -313,7 +326,8 @@ def diagnose(
         user = str(messages[1].content)
 
         # chat_json 自带 retry + JSON 格式强制
-        raw = chat_json(system_prompt=system, user_message=user)
+        tracker = TokenTracker()
+        raw = chat_json(system_prompt=system, user_message=user, callbacks=[tracker])
 
         # Pydantic 校验
         llm_response = LLMDiagnosisResponse(**raw)
@@ -346,6 +360,7 @@ def _build_llm_context(
     comparison_report: ComparisonReport | None,
     requirement_text: str,
     pseudocode_text: str,
+    expected_report=None,
 ) -> str:
     """构建 LLM 诊断的上下文"""
     parts = []
@@ -375,6 +390,23 @@ def _build_llm_context(
         for check in comparison_report.checks:
             if not check.passed:
                 parts.append(f"- [{check.check_type}] {check.detail}")
+        parts.append("")
+
+    # ── L2.5 预期结果比对 ──
+    if expected_report is not None:
+        parts.append("## L2.5 预期结果比对")
+        parts.append(f"预期 {expected_report.total_expected} 行, 实际 {expected_report.total_actual} 行")
+        parts.append(f"匹配: {expected_report.match_count}, 偏差: {expected_report.mismatch_count}")
+        if expected_report.missing_in_actual:
+            parts.append(f"缺失行: {', '.join(expected_report.missing_in_actual[:10])}")
+        if expected_report.extra_in_actual:
+            parts.append(f"多余行: {', '.join(expected_report.extra_in_actual[:10])}")
+        if expected_report.value_diffs:
+            parts.append("数值偏差详情:")
+            for diff in expected_report.value_diffs[:20]:
+                parts.append(f"  - {diff.key_values}: {diff.column} "
+                           f"预期={diff.expected_value}, 实际={diff.actual_value}, "
+                           f"偏差={diff.diff_percent:.1%}")
         parts.append("")
 
     parts.append("请根据以上信息进行诊断分析，输出 JSON。")

@@ -14,6 +14,7 @@ from models import (
 )
 from extractor.prompts import build_pseudocode_prompt
 from llm_client import chat_json
+from callbacks.token_tracker import TokenTracker
 
 
 def _format_matches(retrieval: RetrievalResult) -> str:
@@ -50,10 +51,22 @@ def _format_matches(retrieval: RetrievalResult) -> str:
     return "\n".join(parts)
 
 
+def _format_assertions(assertions: list) -> str:
+    """将断言列表格式化为 LLM prompt 中的约束"""
+    parts = ["\n## 已确认的断言条件（必须在 SQL 中使用）\n"]
+    parts.append("以下是通过码值匹配确定的 SQL 条件，伪代码中必须使用这些精确值：\n")
+    for a in assertions:
+        parts.append(f"- **{a.concept_source}** → `{a.sql_condition}` "
+                     f"(confidence={a.confidence:.0%})")
+    parts.append("")
+    return "\n".join(parts)
+
+
 def generate(
     requirement_text: str,
     retrieval: RetrievalResult,
     concepts: list[BusinessConcept] | None = None,
+    assertions: list | None = None,
 ) -> PseudoCode:
     """生成分析伪代码
 
@@ -61,16 +74,18 @@ def generate(
         requirement_text: 原始需求文档
         retrieval: 检索匹配结果
         concepts: 提取的业务概念（可选）
+        assertions: 断言条件列表（可选，来自 assertions.py 的 build_assertions）
 
     Returns:
-        PseudoCode 结构
-
-    Raises:
-        RuntimeError: LLM 调用失败（含 3 次 retry）
-        ValidationError: LLM 输出不符合 schema
+        PseudoCode 结构。LLM 调用失败时返回空 steps 的 PseudoCode。
     """
     prompt = build_pseudocode_prompt()
     formatted = _format_matches(retrieval)
+
+    # ── 注入断言条件 ──
+    if assertions:
+        formatted += _format_assertions(assertions)
+
     messages = prompt.format_messages(
         requirement=requirement_text,
         matches=formatted,
@@ -78,7 +93,21 @@ def generate(
     system = messages[0].content
     user = messages[1].content
 
-    raw = chat_json(system_prompt=str(system), user_message=str(user))
+    tracker = TokenTracker()
+
+    try:
+        raw = chat_json(
+            system_prompt=str(system),
+            user_message=str(user),
+            callbacks=[tracker],
+        )
+    except RuntimeError:
+        return PseudoCode(
+            title="LLM 调用失败",
+            steps=[],
+            todo_items=["LLM 伪代码生成失败，请手动编写"],
+            notes=[f"TokenTracker: {tracker.summary()}"]
+        )
 
     parser = PydanticOutputParser(pydantic_object=PseudoCode)
     return parser.parse(json.dumps(raw, ensure_ascii=False))

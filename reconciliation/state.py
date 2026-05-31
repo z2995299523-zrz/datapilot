@@ -36,5 +36,9 @@ class ReconciliationState(TypedDict, total=False):
     error_message: str              # 异常信息
     fix_history_json: str           # 修复历史 list[dict] → JSON
 
+    # ── L2.5 预期结果比对 ──
+    expected_csv_path: str          # 预期 CSV 文件路径
+    expected_report_json: str       # ExpectedComparisonReport.model_dump_json()
+
     # ── 数据库连接（可选，非序列化） ──
     # conn: 不作为 state 字段传递，由节点自行获取

@@ -21,6 +21,7 @@ from reconciliation.nodes import (
     auto_fix_node,
     manual_report_node,
     retest_node,
+    reanalyze_node,
 )
 from reconciliation.router import after_run_tests, after_diagnose, after_retest
 
@@ -42,6 +43,7 @@ def build_graph(conn=None) -> StateGraph:
     workflow.add_node("auto_fix", auto_fix_node)
     workflow.add_node("manual_report", manual_report_node)
     workflow.add_node("retest", retest_node)
+    workflow.add_node("reanalyze", reanalyze_node)
 
     workflow.set_entry_point("run_tests")
 
@@ -51,9 +53,10 @@ def build_graph(conn=None) -> StateGraph:
     )
     workflow.add_conditional_edges(
         "diagnose", after_diagnose,
-        {"auto_fix": "auto_fix", "manual_report": "manual_report"},
+        {"auto_fix": "auto_fix", "manual_report": "manual_report", "reanalyze": "reanalyze"},
     )
     workflow.add_edge("auto_fix", "retest")
+    workflow.add_edge("reanalyze", "retest")
     workflow.add_edge("manual_report", END)
     workflow.add_conditional_edges(
         "retest", after_retest,

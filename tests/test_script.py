@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from models import (
     PseudoCode, PseudoCodeStep, TableInfo, ColumnInfo, DataLayer,
+    Assertion, AssertionType,
 )
 from generator.script import (
     generate_sql,
@@ -16,6 +17,7 @@ from generator.script import (
     _parse_output_columns,
     _looks_aggregate,
     _is_aggregated,
+    _assertion_already_covered,
 )
 
 
@@ -271,6 +273,32 @@ class TestJoinInference:
         keys = infer_join_keys("t1", "t2", {"t1": t1, "t2": t2})
         assert len(keys) >= 1
         assert keys[0] == ("dept_id", "dept_id")
+
+
+class TestAssertionAlreadyCovered:
+    """_assertion_already_covered — P1 补测"""
+
+    def test_column_and_value_match(self):
+        a = Assertion(type=AssertionType.CODE, column="cust_status",
+                      value="01", sql_condition="cust_status = '01'")
+        assert _assertion_already_covered(a, ["cust_status = '01'"]) is True
+
+    def test_column_match_but_different_value(self):
+        """列名相同但值不同 → 应返回 True（'=' 操作符被认为已覆盖）"""
+        a = Assertion(type=AssertionType.CODE, column="cust_status",
+                      value="01", sql_condition="cust_status = '01'")
+        # 现有 WHERE 有相同列名 + '=' 但值不同 → TRUE（不会重复注入）
+        assert _assertion_already_covered(a, ["cust_status = '02'"]) is True
+
+    def test_column_not_in_clause(self):
+        a = Assertion(type=AssertionType.CODE, column="risk_level",
+                      value="03", sql_condition="risk_level = '03'")
+        assert _assertion_already_covered(a, ["cust_status = '01'"]) is False
+
+    def test_empty_where_clauses(self):
+        a = Assertion(type=AssertionType.CODE, column="status",
+                      value="01", sql_condition="status = '01'")
+        assert _assertion_already_covered(a, []) is False
 
 
 if __name__ == "__main__":

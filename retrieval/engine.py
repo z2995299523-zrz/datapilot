@@ -8,7 +8,7 @@ from config import RETRIEVAL_LAYERS, RETRIEVAL_TOP_K, RETRIEVAL_THRESHOLD
 from models import (
     BusinessConcept, TableMatch, RetrievalResult, ConceptExtractionResult,
 )
-from retrieval.matcher import match_layer
+from retrieval.matcher import match_layer, match_layer_hybrid
 from retrieval.ranker import rank_matches
 
 
@@ -18,6 +18,7 @@ def search(
     layers: list[str] | None = None,
     top_k: int = RETRIEVAL_TOP_K,
     threshold: float = RETRIEVAL_THRESHOLD,
+    db_conn=None,
 ) -> RetrievalResult:
     """分层递进检索
 
@@ -63,8 +64,9 @@ def search(
 
         t0 = time.time()
         for layer in layers:
-            layer_matches = match_layer(
+            layer_matches = match_layer_hybrid(
                 concept, collection, layer,
+                db_conn=db_conn,
                 top_k=top_k, threshold=threshold,
             )
 

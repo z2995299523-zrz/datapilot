@@ -17,6 +17,7 @@ from reconciliation.nodes import (
     auto_fix_node,
     manual_report_node,
     retest_node,
+    reanalyze_node,
     _apply_coalesce_fix,
     _apply_substr_fix,
 )
@@ -219,6 +220,47 @@ class TestRetestNode:
 
 
 # ============================================================================
+# 语义重分析节点
+# ============================================================================
+
+class TestReanalyzeNode:
+    def test_respects_max_loops(self):
+        """超过 max_loops → failed（无需 mock，直接返回 failed）"""
+        state = ReconciliationState(
+            requirement_text="test",
+            original_sql="SELECT 1",
+            diagnosis_report_json='{"items": []}',
+            loop_count=3,
+            max_loops=3,
+        )
+        # loop_count >= max_loops，函数开头就返回，不会触发 BGE import
+        result = reanalyze_node(state)
+        assert result["status"] == "failed"
+        assert result["loop_count"] == 4
+
+    def test_reanalyze_increments_loop(self):
+        """reanalyze 增加循环计数（mock generate 避免 LLM 调用）"""
+        from unittest import mock
+        from models import PseudoCode
+
+        state = ReconciliationState(
+            requirement_text="test",
+            original_sql="SELECT 1",
+            diagnosis_report_json='{"items": []}',
+            loop_count=1,
+            max_loops=5,
+            fix_history_json="[]",
+        )
+        with mock.patch("generator.pseudocode.generate",
+                        return_value=PseudoCode(title="test", steps=[])):
+            with mock.patch("generator.script.generate_sql",
+                            return_value="SELECT 2"):
+                result = reanalyze_node(state)
+        assert result["loop_count"] == 2
+        assert result["status"] == "running"
+
+
+# ============================================================================
 # 路由
 # ============================================================================
 
@@ -256,6 +298,33 @@ class TestRouter:
         )
         state = ReconciliationState(diagnosis_report_json=diag.model_dump_json())
         assert after_diagnose(state) == "manual_report"
+
+    def test_after_diagnose_semantic_reanalyze(self):
+        """语义错误 + 无自动修复 → reanalyze"""
+        diag = DiagnosisReport(
+            total_checks=1,
+            items=[DiagnosisItem(severity=Severity.CRITICAL, source="cartesian_product",
+                                 symptom="", root_cause="", impact="",
+                                 fix_suggestion="", prevention="",
+                                 is_auto_fixable=False,
+                                 fix_level="semantic")],
+        )
+        state = ReconciliationState(diagnosis_report_json=diag.model_dump_json())
+        assert after_diagnose(state) == "reanalyze"
+
+    def test_after_diagnose_auto_fix_overrides(self):
+        """有可自动修复项 → auto_fix（即使同时有语义错误）"""
+        diag = DiagnosisReport(
+            total_checks=2,
+            items=[
+                DiagnosisItem(severity=Severity.MEDIUM, source="null_rate",
+                              is_auto_fixable=True, fix_level="syntax"),
+                DiagnosisItem(severity=Severity.CRITICAL, source="cartesian_product",
+                              is_auto_fixable=False, fix_level="semantic"),
+            ],
+        )
+        state = ReconciliationState(diagnosis_report_json=diag.model_dump_json())
+        assert after_diagnose(state) == "auto_fix"
 
     def test_after_retest_continue(self):
         state = ReconciliationState(status="running")

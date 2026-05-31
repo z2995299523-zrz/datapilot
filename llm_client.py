@@ -76,7 +76,7 @@ def chat_text(
 
             # 触发 callbacks
             if callbacks:
-                _notify_callbacks(callbacks, messages, content, model)
+                _notify_callbacks(callbacks, messages, content, model, response)
 
             return content.strip() if content else ""
         except Exception as e:
@@ -129,7 +129,7 @@ def chat_json(
 
             # 触发 callbacks
             if callbacks:
-                _notify_callbacks(callbacks, messages, content, model)
+                _notify_callbacks(callbacks, messages, content, model, response)
 
             return result
         except (json.JSONDecodeError, Exception) as e:
@@ -145,7 +145,8 @@ def chat_json(
     raise RuntimeError(f"LLM 调用失败（重试 {max_retry} 次）: {last_error}")
 
 
-def _notify_callbacks(callbacks: list, messages: list, content: str, model: str):
+def _notify_callbacks(callbacks: list, messages: list, content: str, model: str,
+                      api_response=None):
     """通知 callbacks（TokenTracker/AuditLogger 的简化集成）"""
     for cb in callbacks:
         try:
@@ -154,7 +155,15 @@ def _notify_callbacks(callbacks: list, messages: list, content: str, model: str)
                 class _FakeResponse:
                     pass
                 resp = _FakeResponse()
-                resp.llm_output = {}
+                # 从 API 响应中提取真实 token_usage
+                token_usage = {}
+                if api_response and hasattr(api_response, "usage") and api_response.usage:
+                    token_usage = {
+                        "prompt_tokens": api_response.usage.prompt_tokens or 0,
+                        "completion_tokens": api_response.usage.completion_tokens or 0,
+                        "total_tokens": api_response.usage.total_tokens or 0,
+                    }
+                resp.llm_output = {"token_usage": token_usage}
                 resp.generations = [[_FakeResponse()]]
                 resp.generations[0][0].text = content
                 cb.on_llm_end(resp)

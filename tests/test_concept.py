@@ -111,6 +111,22 @@ class TestConceptExtraction:
         with pytest.raises(Exception):
             extract_concepts("test")
 
+    def test_llm_failure_graceful_degradation(self):
+        """LLM 调用失败 → 返回空 concepts + llm_error"""
+        with mock.patch("extractor.concept.chat_json", side_effect=RuntimeError("LLM 超时")):
+            result = extract_concepts("测试需求")
+        assert isinstance(result, ConceptExtractionResult)
+        assert len(result.concepts) == 0
+        assert "LLM 超时" in result.llm_error
+        assert result.raw_requirement == "测试需求"
+
+    def test_llm_token_usage_tracked(self, mock_llm):
+        """TokenTracker 正确记录 token 使用"""
+        result = extract_concepts("测试需求")
+        assert isinstance(result.llm_token_usage, dict)
+        # 即使 mock 返回空 token_usage，字段也应存在
+        assert "total_calls" in result.llm_token_usage
+
 
 class TestRealRequirementSample:
     """使用实际的示例需求文档（不调用 LLM）"""

@@ -16,6 +16,7 @@ from models import (
 )
 from retrieval.matcher import (
     match_layer, _build_search_text, _contains_keyword,
+    match_layer_hybrid, _exact_match_via_db,
 )
 from retrieval.ranker import rank_matches, merge_table_matches, _merge_columns
 from retrieval.engine import search, search_from_extraction
@@ -235,6 +236,89 @@ class TestEngine:
         # 每个概念都应该有匹配结果（或标记为未匹配）
         total = len(result.matches) + len(result.unmatched_concepts)
         assert total == 3
+
+
+class TestHybridRetrieval:
+    """match_layer_hybrid / _exact_match_via_db — P0 补测"""
+
+    @pytest.fixture
+    def mock_db_conn(self):
+        """创建带 information_schema.columns 的 SQLite 内存库"""
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        # SQLite 用 ATTACH 模拟 information_schema 数据库
+        conn.execute("ATTACH DATABASE ':memory:' AS information_schema")
+        conn.execute("""
+            CREATE TABLE information_schema.columns (
+                TABLE_NAME TEXT, TABLE_COMMENT TEXT, COLUMN_NAME TEXT,
+                COLUMN_COMMENT TEXT, TABLE_SCHEMA TEXT
+            )
+        """)
+        conn.execute("""INSERT INTO information_schema.columns VALUES
+            ('dm_customer', '客户表', 'cust_id', '客户ID', 'DM'),
+            ('dm_customer', '客户表', 'cust_status', '客户状态', 'DM'),
+            ('dm_transaction', '交易表', 'trans_date', '交易日期', 'DM'),
+            ('dws_channel', '渠道表', 'channel_type', '渠道类型', 'DWS')
+        """)
+        conn.commit()
+        return conn
+
+    def test_exact_match_via_db_hit(self, mock_db_conn):
+        """精确匹配命中 → 返回 TableMatch"""
+        concept = BusinessConcept(concept="客户", type=ConceptType.ENTITY)
+        result = _exact_match_via_db(concept, mock_db_conn, "DM")
+        assert result is not None
+        assert result.table_name == "dm_customer"
+        assert result.score == 1.0
+        assert result.matched is True
+
+    def test_exact_match_via_db_miss(self, mock_db_conn):
+        """无匹配 → 返回 None"""
+        concept = BusinessConcept(concept="不存在的概念", type=ConceptType.ENTITY)
+        result = _exact_match_via_db(concept, mock_db_conn, "DM")
+        assert result is None
+
+    def test_exact_match_via_db_wrong_layer(self, mock_db_conn):
+        """概念在 DM 但查 ODS → 返回 None"""
+        concept = BusinessConcept(concept="客户", type=ConceptType.ENTITY)
+        result = _exact_match_via_db(concept, mock_db_conn, "ODS")
+        assert result is None
+
+    def test_exact_match_via_db_db_failure(self):
+        """数据库异常 → 返回 None (静默降级)"""
+        import sqlite3
+        bad_conn = sqlite3.connect(":memory:")
+        bad_conn.close()  # 关闭后执行会抛异常
+        concept = BusinessConcept(concept="客户", type=ConceptType.ENTITY)
+        result = _exact_match_via_db(concept, bad_conn, "DM")
+        assert result is None
+
+    def test_match_layer_hybrid_with_db(self, mock_db_conn, demo_collection):
+        """有 DB 连接 → 优先走 information_schema"""
+        concept = BusinessConcept(concept="客户", type=ConceptType.ENTITY,
+                                  candidates=["客户信息"])
+        results = match_layer_hybrid(concept, demo_collection, "DM", db_conn=mock_db_conn)
+        assert len(results) > 0
+        assert results[0].score == 1.0
+        # 结果来自 information_schema 精确匹配
+        assert results[0].table_name is not None
+
+    def test_match_layer_hybrid_without_db(self, demo_collection):
+        """无 DB 连接 → fallback 到 ChromaDB"""
+        concept = BusinessConcept(concept="客户", type=ConceptType.ENTITY)
+        results = match_layer_hybrid(concept, demo_collection, "DM", db_conn=None)
+        # 结果取决于 ChromaDB，至少应该返回列表
+        assert isinstance(results, list)
+
+    def test_match_layer_hybrid_db_failure_fallback(self, demo_collection):
+        """DB 查询异常 → fallback 到 ChromaDB"""
+        import sqlite3
+        bad_conn = sqlite3.connect(":memory:")
+        bad_conn.close()
+        concept = BusinessConcept(concept="客户", type=ConceptType.ENTITY)
+        results = match_layer_hybrid(concept, demo_collection, "DM", db_conn=bad_conn)
+        # 应该静默降级到 ChromaDB，不抛异常
+        assert isinstance(results, list)
 
 
 if __name__ == "__main__":

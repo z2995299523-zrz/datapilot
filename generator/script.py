@@ -14,19 +14,21 @@ JOIN 键推断优先级:
   3. LLM 辅助推断（前两者都失败时）
 """
 from models import (
-    PseudoCode, PseudoCodeStep, TableInfo,
+    PseudoCode, PseudoCodeStep, TableInfo, Assertion, AssertionType,
 )
 
 
 def generate_sql(
     pseudocode: PseudoCode,
     tables: dict[str, TableInfo] | None = None,
+    assertions: list[Assertion] | None = None,
 ) -> str:
     """将伪代码步骤编译为一条 SQL 查询
 
     Args:
         pseudocode: 分析伪代码
         tables: 数据字典中的表信息映射 {table_name: TableInfo}，用于 JOIN 键推断
+        assertions: 断言条件列表，WHERE 子句生成时优先使用
 
     Returns:
         完整的 SQL SELECT 语句
@@ -81,6 +83,14 @@ def generate_sql(
         for col in select_parts:
             if not _looks_aggregate(col) and col not in group_by_parts:
                 group_by_parts.append(col)
+
+    # ── 断言条件注入：补充 LLM 遗漏的 WHERE 条件 ──
+    if assertions:
+        for a in assertions:
+            if a.type == AssertionType.CODE:
+                # 检查该断言是否已被现有 WHERE 条件覆盖
+                if not _assertion_already_covered(a, where_clauses):
+                    where_clauses.append(a.sql_condition)
 
     # 组装 SQL
     return _assemble_sql(
@@ -155,6 +165,21 @@ def _is_aggregated(col: str, aggregations: list[str]) -> bool:
             alias = agg_lower.split(" as ")[-1].strip()
             if alias == col_lower:
                 return True
+    return False
+
+
+def _assertion_already_covered(assertion: Assertion, where_clauses: list[str]) -> bool:
+    """检查断言条件是否已被现有 WHERE 子句覆盖"""
+    col = assertion.column.lower()
+    val = assertion.value.lower()
+    for clause in where_clauses:
+        clause_lower = clause.lower()
+        # 已包含相同列名和相同值 → 已覆盖
+        if col in clause_lower and val in clause_lower:
+            return True
+        # 已包含相同列名和 = 操作符 → 可能已覆盖
+        if col in clause_lower and "=" in clause_lower:
+            return True
     return False
 
 
