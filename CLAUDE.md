@@ -27,7 +27,7 @@ python cli.py search --req demo/req_sample.txt --verbose    # 概念提取 + 分
 python cli.py analyze --req demo/req_sample.txt             # 完整链路（概念→检索→伪代码）
 python cli.py analyze --req demo/req_sample.txt --sql       # 包含 SQL 生成
 
-# 运行全部测试（210 tests，需设 DEEPSEEK_API_KEY）
+# 运行全部测试（292 tests，需设 DEEPSEEK_API_KEY）
 pytest tests/ -v
 
 # 运行单个测试文件
@@ -49,7 +49,7 @@ streamlit run ui/app.py
 | P1: 需求分析助手 | ✅ | 81 |
 | P2: LangChain重构 + SQL生成 | ✅ | 136 |
 | P3: 逻辑比对 + LangGraph修复闭环 | ✅ | 210 |
-| P4: LangSmith + Streamlit + Demo | ⬜ | — |
+| P4: LangSmith + Streamlit + Demo | ✅ | — |
 
 ## 技术栈
 
@@ -120,7 +120,7 @@ datapilot/
 ├── reconciliation/           # state.py + nodes.py + router.py → graph.py（LangGraph）
 ├── callbacks/                # token_tracker.py + audit_logger.py
 ├── demo/                     # data_dict.csv + req_sample.txt
-└── tests/                    # 210 tests, pytest
+└── tests/                    # 292 tests, pytest
 ```
 
 ## 核心约束
@@ -140,3 +140,67 @@ datapilot/
 - 代码完成后讲解：实现方式 / 为什么这样实现 / 更好的办法，用 ETL 概念类比
 - BGE 模型当前在 indexer.py 和 matcher.py 各加载一次（待合并为共享单例）
 - SQL 用规则引擎生成（确定性），测试代码用 LLM 统一生成（语义覆盖）
+
+## 行为准则
+
+### 1. 编码前：停下来想
+
+- **明确假设** — 如果需求有歧义，列出 2-3 种解读，让用户选，不要自己默默猜
+- **指出更简单的方案** — 如果用户要的方案过于复杂，主动提出替代路径
+- **不确定就说不知道** — 不要假装理解，停下来确认
+
+> 来源：andrej-karpathy-skills "Think Before Coding"
+
+### 2. 改动时：最小扩散
+
+- **每行改动都能追溯到需求** — 不顺手重构不相干的代码、不改旁边的格式、不删看起来"没用"的东西
+- **看到烂代码？提出来，但不动** — 让用户决定是否另开任务处理
+- **改名/改签名 → 全仓库搜索引用** — 包括 import、字符串字面量、测试 mock 路径、`__init__.py` 重导出
+
+> 来源：andrej-karpathy-skills "Surgical Changes" + agent-md "Edit Safety"
+
+### 3. 完成后：三层验证
+
+| 层 | 做什么 | 什么时候必须 |
+|----|--------|-------------|
+| Text | pytest + ruff 通过 | 每次改动 |
+| Runtime | 改过的 CLI/Script 实际跑一遍 | 改了可执行路径 |
+| Visual | Streamlit UI 截图 | 改了 UI 组件 |
+
+**不要只靠代码审查就声称完成。** 测试全绿 ≠ 真的能跑。
+
+> 来源：agent-md "Verification"
+
+### 4. 被纠正后：写 gotcha（有门禁）
+
+被纠正后，先过三道门禁，再决定是否写入 `memory/gotchas.md`：
+
+**门禁 1 — 是可复用的模式吗？**
+- ✅ 值得记录：揭示了系统性知识缺口，同样错误可能再犯（如 mock 路径规则、BGE 加载顺序）
+- ❌ 不记录：一次性 typo、变量名改个拼写、这次特有的偶然失误
+
+**门禁 2 — 已存在吗？**
+- 写入前先 `Grep` 搜索 `memory/gotchas.md` 中是否已有类似条目
+- 有 → 更新已有条目（补充现象/根因），不创建重复项
+- 无 → 新建
+
+**门禁 3 — 至少包含根因 + 教训**
+- 只写现象（"XX 出错了"）→ 不合格，必须挖到根因
+- 根因不清楚 → 先 debug，搞清楚再写
+
+```markdown
+---
+name: <kebab-case>
+description: <一句话触发条件>
+metadata:
+  type: gotcha
+---
+
+**现象:** 看到什么
+**根因:** 为什么发生
+**教训:** 以后怎么做
+```
+
+已有的 gotchas（BGE segfault、`assert` 关键字、qualifier 无空格 `=` 等）从 `reference_pitfalls.md` 迁移到了 `memory/gotchas.md`。这是活的文档。
+
+> 来源：agent-md "Self-Correction"

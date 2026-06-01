@@ -1,5 +1,5 @@
 """
-L1 基础数据质量测试 — SQL 生成模式
+L1 基础数据质量测试 — 执行与解析层
 
 设计原则：
   原始 SQL 被包成 CTE (_source)，检查逻辑写成 SELECT 语句在数据库内执行。
@@ -12,6 +12,9 @@ L1 基础数据质量测试 — SQL 生成模式
   (check_type, column_name, value1, value2, value3)
 保证 UNION ALL 可行，parse_test_results 按 check_type 分派解析。
 
+SQL 生成函数已提取到 testing.quality_sql.py（SRP 拆分）。
+此处保留向后兼容重导出。
+
 用法：
   from testing.quality import generate_all_checks_sql, run_quality_tests
   import sqlite3
@@ -21,12 +24,29 @@ L1 基础数据质量测试 — SQL 生成模式
   report = parse_test_results(rows, column_infos)
 """
 import itertools
-import re
 from math import prod
-from typing import Optional
 
 from pydantic import BaseModel, Field
 from models import ColumnInfo, CodeMapping
+
+# ── SQL 生成函数（从 quality_sql 重导出，向后兼容） ──
+from testing.quality_sql import (
+    CTE_NAME,
+    C1, C2, C3, C4, C5,
+    wrap_as_cte,
+    _cte,
+    generate_null_rate_sql,
+    generate_field_length_sql,
+    generate_code_compliance_sql,
+    generate_pk_uniqueness_sql,
+    _null_sql,
+    _length_sql,
+    _code_sql,
+    _pk_sql,
+    generate_all_checks_sql,
+    generate_row_count_sql,
+    _parse_max_length,
+)
 
 
 # ============================================================================
@@ -54,176 +74,6 @@ class QualityReport(BaseModel):
         self.passed_count = sum(1 for c in self.checks if c.passed)
         self.failed_count = sum(1 for c in self.checks if not c.passed)
         self.overall_passed = self.failed_count == 0
-
-
-CTE_NAME = "_source"
-
-# 统一列 schema 的列别名
-C1, C2, C3, C4, C5 = "check_type", "column_name", "v1", "v2", "v3"
-
-
-def _cte(original_sql: str) -> str:
-    """生成顶层 CTE 包装"""
-    sql = original_sql.rstrip().rstrip(";").rstrip()
-    return f"WITH {CTE_NAME} AS (\n{sql}\n)"
-
-
-wrap_as_cte = _cte  # 对外别名
-
-
-def generate_null_rate_sql(original_sql: str, columns: list[str]) -> str:
-    """生成空值率检查 SQL（对外，含 CTE 包装）"""
-    if not columns:
-        return ""
-    queries = [_null_sql(col) for col in columns]
-    return _cte(original_sql) + "\n" + "\nUNION ALL\n".join(queries)
-
-
-def generate_field_length_sql(original_sql: str, column_infos: list[ColumnInfo]) -> str:
-    """生成字段超长检查 SQL（对外，含 CTE 包装）"""
-    queries = []
-    for ci in column_infos:
-        q = _length_sql(ci)
-        if q:
-            queries.append(q)
-    if not queries:
-        return ""
-    return _cte(original_sql) + "\n" + "\nUNION ALL\n".join(queries)
-
-
-def generate_code_compliance_sql(original_sql: str, column: str, valid_codes: list[str]) -> str:
-    """生成码值合规检查 SQL（对外，含 CTE 包装）"""
-    if not valid_codes:
-        return ""
-    q = _code_sql(column, valid_codes)
-    if not q:
-        return ""
-    return _cte(original_sql) + "\n" + q
-
-
-# ============================================================================
-# 内部：不含 CTE 的 SQL 片段（给 generate_all_checks_sql 复用单 CTE）
-# ============================================================================
-
-def generate_pk_uniqueness_sql(original_sql: str, pk_columns: list[str]) -> str:
-    """生成主键唯一性检查 SQL（不包含 CTE 包装，由 generate_all_checks_sql 统一包装）"""
-    if not pk_columns:
-        return ""
-    return _cte(original_sql) + "\n" + _pk_sql(pk_columns)
-
-
-def _pk_sql(pk_columns: list[str]) -> str:
-    """主键唯一性 → 返回重复行的主键值（内部，无 CTE）"""
-    if not pk_columns:
-        return ""
-    cols = ", ".join(pk_columns)
-    return f"""SELECT
-    'pk_uniqueness' AS {C1},
-    '{'+'.join(pk_columns)}' AS {C2},
-    {cols} AS {C3},
-    CAST(COUNT(*) AS TEXT) AS {C4},
-    NULL AS {C5}
-FROM {CTE_NAME}
-GROUP BY {cols}
-HAVING COUNT(*) > 1"""
-
-
-def _null_sql(col: str) -> str:
-    """空值率 → 返回单列统计"""
-    return f"""SELECT
-    'null_rate' AS {C1},
-    '{col}' AS {C2},
-    CAST(COUNT(*) AS TEXT) AS {C3},
-    CAST(SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) AS TEXT) AS {C4},
-    CAST(ROUND(SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS TEXT) AS {C5}
-FROM {CTE_NAME}"""
-
-
-def _length_sql(ci: ColumnInfo) -> str:
-    """字段超长 → 返回超长行的实际长度"""
-    max_len = _parse_max_length(ci.data_type)
-    if max_len is None:
-        return ""
-    return f"""SELECT
-    'field_length' AS {C1},
-    '{ci.name}' AS {C2},
-    CAST(LENGTH(CAST({ci.name} AS VARCHAR)) AS TEXT) AS {C3},
-    '{max_len}' AS {C4},
-    SUBSTR(CAST({ci.name} AS VARCHAR), 1, 50) AS {C5}
-FROM {CTE_NAME}
-WHERE {ci.name} IS NOT NULL AND LENGTH(CAST({ci.name} AS VARCHAR)) > {max_len}"""
-
-
-def _code_sql(col: str, valid_codes: list[str]) -> str:
-    """码值合规 → 返回非法码值及出现次数"""
-    if not valid_codes:
-        return ""
-    codes_str = ", ".join(f"'{c}'" for c in valid_codes)
-    return f"""SELECT
-    'code_compliance' AS {C1},
-    '{col}' AS {C2},
-    CAST({col} AS VARCHAR) AS {C3},
-    CAST(COUNT(*) AS TEXT) AS {C4},
-    NULL AS {C5}
-FROM {CTE_NAME}
-WHERE {col} IS NOT NULL
-  AND CAST({col} AS VARCHAR) NOT IN ({codes_str})
-  AND CAST({col} AS VARCHAR) != ''
-GROUP BY CAST({col} AS VARCHAR)"""
-
-
-# ============================================================================
-# 聚合生成
-# ============================================================================
-
-def generate_all_checks_sql(
-    original_sql: str,
-    column_infos: list[ColumnInfo],
-    pk_columns: list[str] | None = None,
-    check_code_values: bool = True,
-) -> str:
-    """生成全套 L1 检查 SQL（一条语句，一次提交）
-
-    所有子查询统一为 5 列 schema，用 UNION ALL 串联。
-    """
-    if pk_columns is None:
-        pk_columns = [ci.name for ci in column_infos if ci.is_primary_key]
-    col_names = [ci.name for ci in column_infos]
-
-    queries = []
-
-    # 1. 主键唯一性
-    q = _pk_sql(pk_columns)
-    if q:
-        queries.append(q)
-
-    # 2. 空值率（每列）
-    for col in col_names:
-        queries.append(_null_sql(col))
-
-    # 3. 字段超长
-    for ci in column_infos:
-        q = _length_sql(ci)
-        if q:
-            queries.append(q)
-
-    # 4. 码值合规
-    if check_code_values:
-        for ci in column_infos:
-            if ci.code_values:
-                q = _code_sql(ci.name, [c.value for c in ci.code_values])
-                if q:
-                    queries.append(q)
-
-    if not queries:
-        return "-- 无需检查"
-
-    return _cte(original_sql) + "\n" + "\nUNION ALL\n".join(queries) + f"\nORDER BY {C1}, {C2}\n"
-
-
-def generate_row_count_sql(original_sql: str) -> str:
-    """生成行数查询"""
-    return _cte(original_sql) + f"\nSELECT COUNT(*) AS total_rows FROM {CTE_NAME}"
 
 
 # ============================================================================
@@ -467,19 +317,7 @@ def run_quality_tests(
 # 内部工具
 # ============================================================================
 
-def _parse_max_length(data_type: str) -> Optional[int]:
-    if not data_type:
-        return None
-    dt = data_type.lower().strip()
-    if not any(dt.startswith(t) for t in ("varchar", "char", "nvarchar", "nchar")):
-        return None
-    m = re.search(r"\((\d+)\)", dt)
-    if m:
-        return int(m.group(1))
-    if dt == "char":
-        return 1
-    return None
-
+# _parse_max_length 已迁移到 testing.quality_sql，此处仅保留 _group
 
 def _group(rows: list[tuple]) -> dict[str, list[tuple]]:
     g: dict[str, list[tuple]] = {}

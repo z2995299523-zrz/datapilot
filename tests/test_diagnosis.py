@@ -8,7 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models import ColumnInfo, CodeMapping
+from models import ColumnInfo, CodeMapping, DiagnosisRule
 from testing.quality import (
     QualityReport, QualityCheckResult, run_quality_tests,
 )
@@ -338,10 +338,13 @@ class TestDiagnosisRules:
             assert ct in DIAGNOSIS_RULES, f"缺少诊断规则: {ct}"
 
     def test_all_rules_have_required_fields(self):
-        required = {"severity", "symptom", "root_cause", "fix", "prevention", "auto_fixable"}
         for ct, rule in DIAGNOSIS_RULES.items():
-            for field in required:
-                assert field in rule, f"{ct} 规则缺少字段: {field}"
+            assert isinstance(rule, DiagnosisRule), f"{ct} 规则不是 DiagnosisRule 类型"
+            assert rule.severity, f"{ct} 规则 severity 为空"
+            assert rule.symptom, f"{ct} 规则 symptom 为空"
+            assert rule.root_cause, f"{ct} 规则 root_cause 为空"
+            assert rule.fix, f"{ct} 规则 fix 为空"
+            assert rule.prevention, f"{ct} 规则 prevention 为空"
 
 
 # ============================================================================

@@ -73,6 +73,8 @@ def run_reconciliation(
     requirement_text: str = "",
     pk_columns: list[str] | None = None,
     expected_sql: str = "",
+    expected_csv_path: str = "",
+    expected_report_json: str = "",
     source_table_counts: dict[str, int] | None = None,
     join_pairs: list[tuple[str, str]] | None = None,
     max_loops: int = 3,
@@ -86,6 +88,8 @@ def run_reconciliation(
         requirement_text: 需求文档
         pk_columns: 主键列
         expected_sql: 预期结果 SQL
+        expected_csv_path: 预期 CSV 文件路径（L2.5 比对）
+        expected_report_json: 预期比对报告 JSON（L2.5 比对）
         source_table_counts: 源表行数（用于笛卡尔积检测）
         join_pairs: JOIN 表对（用于笛卡尔积检测）
         max_loops: 最大重试次数
@@ -112,6 +116,8 @@ def run_reconciliation(
         "column_infos_json": json.dumps(col_data, ensure_ascii=False),
         "pk_columns_json": json.dumps(pk_columns, ensure_ascii=False),
         "expected_sql": expected_sql,
+        "expected_csv_path": expected_csv_path,
+        "expected_report_json": expected_report_json,
         "loop_count": 0,
         "max_loops": max_loops,
         "status": "running",

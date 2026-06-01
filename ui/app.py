@@ -24,6 +24,27 @@ st.set_page_config(
     layout="wide",
 )
 
+
+def _parse_requirement_file(uploaded_file) -> str:
+    """从上传的需求文档中提取文本。
+
+    支持格式:
+        .txt  — 纯文本
+        .md   — Markdown（按纯文本读取）
+        .docx — Word 文档（提取段落文本）
+    """
+    import io
+    name = uploaded_file.name.lower()
+
+    if name.endswith(".docx"):
+        import docx
+        doc = docx.Document(io.BytesIO(uploaded_file.getvalue()))
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        return "\n\n".join(paragraphs)
+    else:
+        # .txt / .md
+        return uploaded_file.getvalue().decode("utf-8")
+
 # --- Sidebar ---
 st.sidebar.title("📊 DataPilot")
 st.sidebar.caption("需求→SQL→测试→修复 全链路引擎")
@@ -162,9 +183,12 @@ elif page == "🔍 需求分析":
             key="req_text",
         )
     with col2:
-        uploaded_req = st.file_uploader("或上传 .txt 文件", type=["txt"], key="req_upload")
+        uploaded_req = st.file_uploader(
+            "或上传需求文档", type=["txt", "md", "docx"], key="req_upload",
+            help="支持 .txt / .md / .docx 格式",
+        )
         if uploaded_req:
-            requirement_text = uploaded_req.getvalue().decode("utf-8")
+            requirement_text = _parse_requirement_file(uploaded_req)
             st.text_area("已加载文件", requirement_text, height=200, disabled=True)
 
     generate_sql = st.checkbox("生成 SQL 脚本", value=True)
@@ -261,6 +285,112 @@ elif page == "🔍 需求分析":
                     file_name="analysis.sql",
                     mime="text/plain",
                 )
+
+        # Step 5: Expected comparison (optional)
+        st.divider()
+        with st.expander("📊 预期结果比对（可选）", expanded=False):
+            st.markdown("""
+            上传预期数据 CSV，与生成的 SQL 在数据库中执行的结果逐行逐列比对。
+            适用于：旧系统迁移验证、口径一致性核对、回归测试。
+            """)
+
+            expected_file = st.file_uploader(
+                "上传预期数据 CSV",
+                type=["csv"],
+                key="expected_upload_analyze",
+                help="CSV 需包含与 SQL 输出列对应的数据，用于比对验证",
+            )
+
+            if expected_file is not None:
+                import pandas as pd
+                try:
+                    expected_df = pd.read_csv(expected_file)
+                except Exception as e:
+                    st.error(f"❌ CSV 解析失败: {e}")
+                    st.stop()
+
+                st.caption(f"📋 预期数据：{len(expected_df)} 行 × {len(expected_df.columns)} 列")
+                st.dataframe(expected_df.head(10), use_container_width=True)
+
+                # Need DB connection to execute SQL
+                db_conn_str = st.text_input(
+                    "数据库连接字符串（用于执行生成的 SQL）",
+                    placeholder="sqlite:///test.db",
+                    key="db_conn_analyze",
+                )
+
+                # Need generated SQL (only available if sql generation was enabled)
+                if not generate_sql:
+                    st.warning("⚠ 请先勾选「生成 SQL 脚本」并重新分析。")
+                elif db_conn_str:
+                    if st.button("🔬 执行 SQL 并比对", type="primary", key="run_compare_analyze"):
+                        import tempfile
+                        from sqlalchemy import create_engine, text
+
+                        try:
+                            # Save expected CSV to temp file (compare_with_expected needs path)
+                            with tempfile.NamedTemporaryFile(
+                                delete=False, suffix=".csv", mode="w", encoding="utf-8"
+                            ) as tmp:
+                                expected_df.to_csv(tmp.name, index=False)
+                                tmp_path = tmp.name
+
+                            # Execute generated SQL
+                            with st.spinner("🔄 执行 SQL..."):
+                                engine = create_engine(db_conn_str)
+                                with engine.connect() as conn:
+                                    actual_df = pd.read_sql_query(text(sql), conn)
+
+                            st.caption(f"📊 执行结果：{len(actual_df)} 行 × {len(actual_df.columns)} 列")
+                            st.dataframe(actual_df.head(10), use_container_width=True)
+
+                            # Compare
+                            with st.spinner("🔬 逐行逐列比对..."):
+                                from testing.expected_compare import compare_with_expected
+                                report = compare_with_expected(actual_df, tmp_path)
+
+                            # Display report
+                            st.divider()
+                            if report.overall_passed:
+                                st.success(f"✅ 完全匹配！预期 {report.total_expected} 行 = 实际 {report.total_actual} 行")
+                            else:
+                                st.error(f"❌ 发现差异：{report.summary}")
+
+                            # Detail breakdown
+                            col_a, col_b, col_c = st.columns(3)
+                            with col_a:
+                                st.metric("匹配行", report.match_count)
+                            with col_b:
+                                st.metric("差异数", report.mismatch_count)
+                            with col_c:
+                                status = "✅ 通过" if report.overall_passed else "❌ 失败"
+                                st.metric("结果", status)
+
+                            if report.missing_in_actual:
+                                with st.expander(f"🔴 缺失行（{len(report.missing_in_actual)}）"):
+                                    st.write(report.missing_in_actual[:20])
+                            if report.extra_in_actual:
+                                with st.expander(f"🟡 多余行（{len(report.extra_in_actual)}）"):
+                                    st.write(report.extra_in_actual[:20])
+                            if report.value_diffs:
+                                with st.expander(f"🔵 数值偏差（{len(report.value_diffs)}）"):
+                                    diffs_data = [
+                                        {"键": d.key_values, "列": d.column,
+                                         "预期值": d.expected_value, "实际值": d.actual_value,
+                                         "偏差%": f"{d.diff_percent*100:.2f}%"}
+                                        for d in report.value_diffs[:20]
+                                    ]
+                                    st.dataframe(pd.DataFrame(diffs_data), use_container_width=True)
+
+                            # Cleanup temp file
+                            try:
+                                os.unlink(tmp_path)
+                            except Exception:
+                                pass
+
+                        except Exception as e:
+                            st.error(f"❌ 执行失败: {e}")
+
 elif page == "🔧 修复闭环":
     st.title("🔧 修复闭环")
     st.markdown("输入 SQL 查询，运行 L1 数据质量 + L2 逻辑比对 + L3 诊断，自动修复并重测。")
@@ -271,11 +401,22 @@ elif page == "🔧 修复闭环":
         height=150,
         placeholder="SELECT cust_id, channel_type, COUNT(*) as cnt\nFROM dm_customer_active\nGROUP BY cust_id, channel_type",
     )
-    requirement_text = st.text_area(
-        "原始需求文档（可选，用于提供业务上下文）",
-        height=100,
-        placeholder="在此粘贴需求文档...",
-    )
+    col_req1, col_req2 = st.columns([3, 1])
+    with col_req1:
+        requirement_text = st.text_area(
+            "原始需求文档（可选，用于提供业务上下文）",
+            height=100,
+            placeholder="在此粘贴需求文档...",
+            key="req_text_reconcile",
+        )
+    with col_req2:
+        uploaded_req_reconcile = st.file_uploader(
+            "或上传文档", type=["txt", "md", "docx"], key="req_upload_reconcile",
+            help="支持 .txt / .md / .docx",
+        )
+        if uploaded_req_reconcile:
+            requirement_text = _parse_requirement_file(uploaded_req_reconcile)
+            st.caption(f"✅ 已加载 ({uploaded_req_reconcile.name})")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -285,6 +426,13 @@ elif page == "🔧 修复闭环":
             "数据库连接字符串（可选）",
             placeholder="sqlite:///test.db 或 留空跳过实际执行",
         )
+
+    expected_file = st.file_uploader(
+        "📊 预期结果 CSV（可选，用于比对验证）",
+        type=["csv"],
+        key="expected_upload_reconcile",
+        help="上传预期数据 CSV，与 SQL 执行结果逐行逐列比对。旧系统迁移验证必备。",
+    )
 
     if st.button("🔍 运行测试", type="primary", disabled=not original_sql.strip()):
         import json
@@ -322,6 +470,85 @@ elif page == "🔧 修复闭环":
 
         # Run reconciliation
         if conn is not None:
+            # Expected comparison (L2.5) — run before reconciliation
+            expected_report = None
+            if expected_file is not None:
+                st.divider()
+                with st.expander("📊 预期结果比对", expanded=True):
+                    import pandas as pd
+                    import tempfile
+
+                    try:
+                        # Load expected CSV
+                        expected_df = pd.read_csv(expected_file)
+                        st.caption(f"📋 预期数据：{len(expected_df)} 行 × {len(expected_df.columns)} 列")
+
+                        # Execute SQL to get actual results
+                        with st.spinner("🔄 执行 SQL 获取实际结果..."):
+                            actual_df = pd.read_sql_query(text(original_sql), conn)
+
+                        st.caption(f"📊 实际结果：{len(actual_df)} 行 × {len(actual_df.columns)} 列")
+                        st.dataframe(actual_df.head(10), use_container_width=True)
+
+                        # Save expected to temp file for compare_with_expected
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=".csv", mode="w", encoding="utf-8"
+                        ) as tmp:
+                            expected_df.to_csv(tmp.name, index=False)
+                            tmp_path = tmp.name
+
+                        with st.spinner("🔬 逐行逐列比对..."):
+                            from testing.expected_compare import compare_with_expected
+                            expected_report = compare_with_expected(actual_df, tmp_path)
+
+                        # Display comparison report
+                        if expected_report.overall_passed:
+                            st.success(
+                                f"✅ 完全匹配！预期 {expected_report.total_expected} 行 = "
+                                f"实际 {expected_report.total_actual} 行"
+                            )
+                        else:
+                            st.error(f"❌ 发现差异：{expected_report.summary}")
+
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("匹配行", expected_report.match_count)
+                        with col_b:
+                            st.metric("差异数", expected_report.mismatch_count)
+                        with col_c:
+                            status = "✅ 通过" if expected_report.overall_passed else "❌ 失败"
+                            st.metric("结果", status)
+
+                        if expected_report.missing_in_actual:
+                            with st.expander(f"🔴 缺失行（{len(expected_report.missing_in_actual)}）"):
+                                st.write(expected_report.missing_in_actual[:20])
+                        if expected_report.extra_in_actual:
+                            with st.expander(f"🟡 多余行（{len(expected_report.extra_in_actual)}）"):
+                                st.write(expected_report.extra_in_actual[:20])
+                        if expected_report.value_diffs:
+                            with st.expander(f"🔵 数值偏差（{len(expected_report.value_diffs)}）"):
+                                diffs_data = [
+                                    {
+                                        "键": d.key_values, "列": d.column,
+                                        "预期值": d.expected_value, "实际值": d.actual_value,
+                                        "偏差%": f"{d.diff_percent*100:.2f}%",
+                                    }
+                                    for d in expected_report.value_diffs[:20]
+                                ]
+                                st.dataframe(pd.DataFrame(diffs_data), use_container_width=True)
+
+                        # Cleanup
+                        try:
+                            os.unlink(tmp_path)
+                        except Exception:
+                            pass
+
+                    except Exception as e:
+                        st.error(f"❌ 预期比对失败: {e}")
+                        expected_report = None
+
+                st.divider()
+
             # Real execution
             try:
                 from reconciliation.graph import run_reconciliation
@@ -332,6 +559,10 @@ elif page == "🔧 修复闭环":
                         column_infos=column_infos,
                         requirement_text=requirement_text,
                         pk_columns=pk_columns,
+                        expected_report_json=(
+                            expected_report.model_dump_json()
+                            if expected_report else ""
+                        ),
                         max_loops=max_loops,
                     )
 

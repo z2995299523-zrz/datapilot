@@ -21,6 +21,7 @@ import json
 
 from pydantic import BaseModel, Field
 
+from models import DiagnosisRule
 from testing.quality import QualityCheckResult, QualityReport
 from testing.comparison import ComparisonResult, ComparisonReport
 
@@ -74,111 +75,123 @@ class DiagnosisReport(BaseModel):
 # 规则诊断（纯 Python，不调 LLM）
 # ============================================================================
 
-# 诊断规则表：check_type → (severity, symptom_template, root_cause, fix)
-DIAGNOSIS_RULES: dict[str, dict] = {
-    "cartesian_product": {
-        "severity": Severity.CRITICAL,
-        "symptom": "结果集行数异常膨胀，疑似笛卡尔积",
-        "root_cause": "多表 JOIN 时缺少有效的 ON 条件，导致行数 = 各表行数之积。常见于："
-                      "1) LEFT JOIN 忘了写 ON；2) ON 条件中关联键名写错；"
-                      "3) 数据字典中外键关系标注缺失",
-        "fix": "1) 检查每个 JOIN 子句是否都有 ON 条件；2) 验证关联键名在两个表中是否一致；"
-               "3) 补充数据字典中外键引用关系",
-        "prevention": "在 script.py 生成 SQL 时强制校验：每出现一个 JOIN 关键字，"
-                      "必须紧跟 ON 条件，否则拒绝生成",
-        "auto_fixable": False,
-        "fix_level": "semantic",
-    },
-    "pk_uniqueness": {
-        "severity": Severity.HIGH,
-        "symptom": "主键重复，存在多行相同标识",
-        "root_cause": "1) JOIN 导致行膨胀（最常见）；2) 源表数据本身有重复；"
-                      "3) GROUP BY 缺少必要的分组列；4) 窗口函数未正确去重",
-        "fix": "1) 检查 JOIN 条件是否正确；2) 考虑在最外层加 DISTINCT 或 ROW_NUMBER()=1 去重；"
-               "3) 检查 GROUP BY 是否包含了所有非聚合 SELECT 列",
-        "prevention": "伪代码生成阶段确认每个 JOIN 的基数关系（1:1, 1:N, N:M），"
-                      "对 N:M 关系自动加去重步骤",
-        "auto_fixable": False,
-        "fix_level": "semantic",
-    },
-    "null_rate": {
-        "severity": Severity.MEDIUM,
-        "symptom": "列空值率超过阈值",
-        "root_cause": "1) LEFT JOIN 右表无匹配（最常见）；2) 源表数据缺失；"
-                      "3) 过滤条件过严导致部分行为 NULL；4) 聚合时未处理 NULL",
-        "fix": "1) 将 LEFT JOIN 改为 INNER JOIN（如果业务允许）；"
-               "2) 用 COALESCE(col, default_value) 填充默认值；"
-               "3) 在 WHERE 中加 col IS NOT NULL 过滤",
-        "prevention": "伪代码生成时对可能为 NULL 的列标注，输出阶段自动加 COALESCE",
-        "auto_fixable": True,
-    },
-    "field_length": {
-        "severity": Severity.LOW,
-        "symptom": "字段值超过数据字典定义的最大长度",
-        "root_cause": "1) 源系统数据质量问题；2) 数据字典维护不及时（定义长度偏小）；"
-                      "3) 字符串拼接导致超长（如 CONCAT 多列）",
-        "fix": "1) 更新数据字典中的长度定义；2) 输出时用 SUBSTR(col, 1, N) 截断；"
-               "3) 排查源系统数据录入问题",
-        "prevention": "定期比对源表实际数据长度与字典定义，自动告警偏差",
-        "auto_fixable": True,
-    },
-    "code_compliance": {
-        "severity": Severity.MEDIUM,
-        "symptom": "存在不在码值映射范围内的非法枚举值",
-        "root_cause": "1) 源系统新增了码值但数据字典未更新；2) 脏数据（录入错误）；"
-                      "3) NULL 或空字符串被当作合法值处理",
-        "fix": "1) 更新数据字典码值表；2) 对非法值做映射（如统一归为'其他'）；"
-               "3) 在 WHERE 中过滤非法码值",
-        "prevention": "建立码值变更监控：源系统码值表变更时自动同步数据字典",
-        "auto_fixable": True,
-    },
-    "row_count": {
-        "severity": Severity.HIGH,
-        "symptom": "结果行数与预期不一致",
-        "root_cause": "1) WHERE 条件过宽或过窄；2) JOIN 导致行数变化；"
-                      "3) 聚合逻辑错误；4) 数据源本身发生变化",
-        "fix": "1) 逐层对比中间结果的行数（DM→DWS→ODS）定位偏差层；"
-               "2) 检查 WHERE 条件和 JOIN 条件是否正确",
-        "prevention": "伪代码生成时标注每步预期的行数变化方向（↑/↓/=）",
-        "auto_fixable": False,
-        "fix_level": "semantic",
-    },
-    "full_diff": {
-        "severity": Severity.HIGH,
-        "symptom": "数据值与预期不一致",
-        "root_cause": "1) SQL 计算逻辑与预期口径不一致；2) 码值转换遗漏；"
-                      "3) 浮点数精度问题；4) 时区/字符集问题",
-        "fix": "1) 逐列对比差异，根据差异模式推断错误类型；"
-               "2) 对聚合列检查 GROUP BY 是否正确；"
-               "3) 检查是否遗漏了码值 JOIN（如 status→status_name 映射）",
-        "prevention": "关键指标列在伪代码中标注计算公式，生成 SQL 后自动校验公式一致性",
-        "auto_fixable": False,
-        "fix_level": "semantic",
-    },
-    "aggregation": {
-        "severity": Severity.HIGH,
-        "symptom": "明细聚合值与汇总表不一致",
-        "root_cause": "1) 明细数据与汇总表的数据范围不同（时间窗口/筛选条件差异）；"
-                      "2) 聚合使用了不同的去重逻辑；"
-                      "3) 汇总表更新不及时（T+1 延迟）",
-        "fix": "1) 对齐明细查询与汇总表的时间范围和筛选条件；"
-               "2) 确认 COUNT 与 COUNT(DISTINCT) 的使用是否一致；"
-               "3) 检查汇总表的数据时效",
-        "prevention": "在伪代码中显式标注聚合口径（是否去重、是否包含 NULL），生成 SQL 时保持一致",
-        "auto_fixable": False,
-        "fix_level": "semantic",
-    },
-    "schema": {
-        "severity": Severity.HIGH,
-        "symptom": "输出列结构与预期不一致",
-        "root_cause": "1) SELECT 列表中列名拼写错误；2) 缺少必要的 JOIN；"
-                      "3) 遗漏了需要的列",
-        "fix": "1) 对比预期列和实际列，补充缺失列或移除多余列；"
-               "2) 检查伪代码的 output 字段是否完整",
-        "prevention": "在伪代码→SQL 转换时自动校验：所有 output 列都出现在 SELECT 中",
-        "auto_fixable": True,
-        "fix_level": "syntax",
-    },
+# 诊断规则表 — 类型化 DiagnosisRule 列表
+DIAGNOSIS_RULES: dict[str, DiagnosisRule] = {
+    rule.check_type: rule
+    for rule in [
+        DiagnosisRule(
+            check_type="cartesian_product",
+            severity=Severity.CRITICAL,
+            symptom="结果集行数异常膨胀，疑似笛卡尔积",
+            root_cause="多表 JOIN 时缺少有效的 ON 条件，导致行数 = 各表行数之积。常见于："
+                       "1) LEFT JOIN 忘了写 ON；2) ON 条件中关联键名写错；"
+                       "3) 数据字典中外键关系标注缺失",
+            fix="1) 检查每个 JOIN 子句是否都有 ON 条件；2) 验证关联键名在两个表中是否一致；"
+                "3) 补充数据字典中外键引用关系",
+            prevention="在 script.py 生成 SQL 时强制校验：每出现一个 JOIN 关键字，"
+                       "必须紧跟 ON 条件，否则拒绝生成",
+            auto_fixable=False,
+            fix_level="semantic",
+        ),
+        DiagnosisRule(
+            check_type="pk_uniqueness",
+            severity=Severity.HIGH,
+            symptom="主键重复，存在多行相同标识",
+            root_cause="1) JOIN 导致行膨胀（最常见）；2) 源表数据本身有重复；"
+                       "3) GROUP BY 缺少必要的分组列；4) 窗口函数未正确去重",
+            fix="1) 检查 JOIN 条件是否正确；2) 考虑在最外层加 DISTINCT 或 ROW_NUMBER()=1 去重；"
+                "3) 检查 GROUP BY 是否包含了所有非聚合 SELECT 列",
+            prevention="伪代码生成阶段确认每个 JOIN 的基数关系（1:1, 1:N, N:M），"
+                       "对 N:M 关系自动加去重步骤",
+            auto_fixable=False,
+            fix_level="semantic",
+        ),
+        DiagnosisRule(
+            check_type="null_rate",
+            severity=Severity.MEDIUM,
+            symptom="列空值率超过阈值",
+            root_cause="1) LEFT JOIN 右表无匹配（最常见）；2) 源表数据缺失；"
+                       "3) 过滤条件过严导致部分行为 NULL；4) 聚合时未处理 NULL",
+            fix="1) 将 LEFT JOIN 改为 INNER JOIN（如果业务允许）；"
+                "2) 用 COALESCE(col, default_value) 填充默认值；"
+                "3) 在 WHERE 中加 col IS NOT NULL 过滤",
+            prevention="伪代码生成时对可能为 NULL 的列标注，输出阶段自动加 COALESCE",
+            auto_fixable=True,
+        ),
+        DiagnosisRule(
+            check_type="field_length",
+            severity=Severity.LOW,
+            symptom="字段值超过数据字典定义的最大长度",
+            root_cause="1) 源系统数据质量问题；2) 数据字典维护不及时（定义长度偏小）；"
+                       "3) 字符串拼接导致超长（如 CONCAT 多列）",
+            fix="1) 更新数据字典中的长度定义；2) 输出时用 SUBSTR(col, 1, N) 截断；"
+                "3) 排查源系统数据录入问题",
+            prevention="定期比对源表实际数据长度与字典定义，自动告警偏差",
+            auto_fixable=True,
+        ),
+        DiagnosisRule(
+            check_type="code_compliance",
+            severity=Severity.MEDIUM,
+            symptom="存在不在码值映射范围内的非法枚举值",
+            root_cause="1) 源系统新增了码值但数据字典未更新；2) 脏数据（录入错误）；"
+                       "3) NULL 或空字符串被当作合法值处理",
+            fix="1) 更新数据字典码值表；2) 对非法值做映射（如统一归为'其他'）；"
+                "3) 在 WHERE 中过滤非法码值",
+            prevention="建立码值变更监控：源系统码值表变更时自动同步数据字典",
+            auto_fixable=True,
+        ),
+        DiagnosisRule(
+            check_type="row_count",
+            severity=Severity.HIGH,
+            symptom="结果行数与预期不一致",
+            root_cause="1) WHERE 条件过宽或过窄；2) JOIN 导致行数变化；"
+                       "3) 聚合逻辑错误；4) 数据源本身发生变化",
+            fix="1) 逐层对比中间结果的行数（DM→DWS→ODS）定位偏差层；"
+                "2) 检查 WHERE 条件和 JOIN 条件是否正确",
+            prevention="伪代码生成时标注每步预期的行数变化方向（↑/↓/=）",
+            auto_fixable=False,
+            fix_level="semantic",
+        ),
+        DiagnosisRule(
+            check_type="full_diff",
+            severity=Severity.HIGH,
+            symptom="数据值与预期不一致",
+            root_cause="1) SQL 计算逻辑与预期口径不一致；2) 码值转换遗漏；"
+                       "3) 浮点数精度问题；4) 时区/字符集问题",
+            fix="1) 逐列对比差异，根据差异模式推断错误类型；"
+                "2) 对聚合列检查 GROUP BY 是否正确；"
+                "3) 检查是否遗漏了码值 JOIN（如 status→status_name 映射）",
+            prevention="关键指标列在伪代码中标注计算公式，生成 SQL 后自动校验公式一致性",
+            auto_fixable=False,
+            fix_level="semantic",
+        ),
+        DiagnosisRule(
+            check_type="aggregation",
+            severity=Severity.HIGH,
+            symptom="明细聚合值与汇总表不一致",
+            root_cause="1) 明细数据与汇总表的数据范围不同（时间窗口/筛选条件差异）；"
+                       "2) 聚合使用了不同的去重逻辑；"
+                       "3) 汇总表更新不及时（T+1 延迟）",
+            fix="1) 对齐明细查询与汇总表的时间范围和筛选条件；"
+                "2) 确认 COUNT 与 COUNT(DISTINCT) 的使用是否一致；"
+                "3) 检查汇总表的数据时效",
+            prevention="在伪代码中显式标注聚合口径（是否去重、是否包含 NULL），生成 SQL 时保持一致",
+            auto_fixable=False,
+            fix_level="semantic",
+        ),
+        DiagnosisRule(
+            check_type="schema",
+            severity=Severity.HIGH,
+            symptom="输出列结构与预期不一致",
+            root_cause="1) SELECT 列表中列名拼写错误；2) 缺少必要的 JOIN；"
+                       "3) 遗漏了需要的列",
+            fix="1) 对比预期列和实际列，补充缺失列或移除多余列；"
+                "2) 检查伪代码的 output 字段是否完整",
+            prevention="在伪代码→SQL 转换时自动校验：所有 output 列都出现在 SELECT 中",
+            auto_fixable=True,
+            fix_level="syntax",
+        ),
+    ]
 }
 
 
@@ -222,19 +235,27 @@ def diagnose_heuristic(
     return report
 
 
+# 未匹配 check_type 时的兜底规则
+_FALLBACK_RULE = DiagnosisRule(
+    check_type="__fallback__",
+    severity=Severity.LOW,
+    symptom="检查类型 {check_type} 失败",
+    root_cause="未知原因",
+    fix="请人工排查",
+    prevention="完善该检查项的数据质量规则",
+    auto_fixable=False,
+)
+
+
 def _apply_rule(
     check: QualityCheckResult | ComparisonResult,
     report: QualityReport | ComparisonReport,
 ) -> DiagnosisItem:
     """将单条失败检查映射为诊断条目"""
-    rule = DIAGNOSIS_RULES.get(check.check_type, {
-        "severity": Severity.LOW,
-        "symptom": f"检查类型 {check.check_type} 失败",
-        "root_cause": "未知原因",
-        "fix": "请人工排查",
-        "prevention": "完善该检查项的数据质量规则",
-        "auto_fixable": False,
-    })
+    rule = DIAGNOSIS_RULES.get(check.check_type, _FALLBACK_RULE)
+
+    # 动态填充 fallback symptom
+    symptom = rule.symptom.format(check_type=check.check_type) if rule is _FALLBACK_RULE else rule.symptom
 
     affected = []
     if hasattr(check, "column") and check.column:
@@ -242,16 +263,16 @@ def _apply_rule(
                   else check.column.split("+")
 
     return DiagnosisItem(
-        severity=rule["severity"],
+        severity=rule.severity,
         source=check.check_type,
-        symptom=rule["symptom"],
-        root_cause=rule["root_cause"],
+        symptom=symptom,
+        root_cause=rule.root_cause,
         impact=f"影响范围: {', '.join(affected) if affected else '全局'} — {check.detail}",
-        fix_suggestion=rule["fix"],
-        prevention=rule["prevention"],
+        fix_suggestion=rule.fix,
+        prevention=rule.prevention,
         affected_columns=affected,
-        is_auto_fixable=rule["auto_fixable"],
-        fix_level=rule.get("fix_level", ""),
+        is_auto_fixable=rule.auto_fixable,
+        fix_level=rule.fix_level,
     )
 
 

@@ -199,6 +199,18 @@ class ExpectedComparisonReport(BaseModel):
 # LLM 诊断响应模型（L3 → LLM 输出校验）
 # ============================================================================
 
+class DiagnosisRule(BaseModel):
+    """单条诊断规则 — DIAGNOSIS_RULES 的类型化替代"""
+    check_type: str
+    severity: str = "medium"
+    symptom: str = ""
+    root_cause: str = ""
+    fix: str = ""
+    prevention: str = ""
+    auto_fixable: bool = False
+    fix_level: str = ""  # "syntax" | "semantic" | ""
+
+
 class LLMDiagnosisItem(BaseModel):
     """LLM 返回的单条诊断"""
     severity: str = "medium"

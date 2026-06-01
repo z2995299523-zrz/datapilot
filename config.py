@@ -1,57 +1,40 @@
 """
-DataPilot 配置中心
+DataPilot 配置中心 — 兼容层
 
-DeepSeek / ChromaDB / BGE Embedding / 项目路径
+旧代码（仍然有效）:
+    from config import LLM_API_KEY, CHROMA_DIR
+
+新代码（推荐）:
+    from services.config import AppConfig
+    config = AppConfig.from_env()
+    service = YourService(config)
+
+# Deprecated: 模块级变量是 AppConfig 的别名，保留到所有调用方迁移完毕
 """
-import os
 from pathlib import Path
 
-# ============================================================================
-# HF 镜像 — 必须在 HuggingFace 任何加载之前设置
-# ============================================================================
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+from services.config import AppConfig
 
-# ============================================================================
-# .env 加载 — 必须在 os.getenv 之前
-# ============================================================================
-from dotenv import load_dotenv
+# 初始化配置（副作用：HF_ENDPOINT + load_dotenv + mkdir）
+_config = AppConfig.from_env(project_root=Path(__file__).resolve().parent)
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-load_dotenv(PROJECT_ROOT / ".env")
+# ── 兼容别名（旧代码无需修改） ──
+PROJECT_ROOT = _config.project_root
+DATA_DIR = _config.data_dir
+CHROMA_DIR = _config.chroma_dir
+DEMO_DIR = _config.demo_dir
 
-# ============================================================================
-# 项目路径
-# ============================================================================
-DATA_DIR = PROJECT_ROOT / "data"
-CHROMA_DIR = DATA_DIR / "chroma_db"
-DEMO_DIR = PROJECT_ROOT / "demo"
+LLM_API_KEY = _config.llm_api_key
+LLM_BASE_URL = _config.llm_base_url
+LLM_MODEL = _config.llm_model
+LLM_TEMPERATURE = _config.llm_temperature
+LLM_MAX_RETRY = _config.llm_max_retry
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+CHROMA_COLLECTION = _config.chroma_collection
 
-# ============================================================================
-# DeepSeek (OpenAI 兼容)
-# ============================================================================
-LLM_API_KEY = os.getenv("DEEPSEEK_API_KEY", "your-deepseek-api-key")
-LLM_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-LLM_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-LLM_TEMPERATURE = 0.1
-LLM_MAX_RETRY = 3
+EMBEDDING_MODEL = _config.embedding_model
+EMBEDDING_DEVICE = _config.embedding_device
 
-# ============================================================================
-# ChromaDB
-# ============================================================================
-CHROMA_COLLECTION = "data_dictionary"
-
-# ============================================================================
-# BGE Embedding (本地)
-# ============================================================================
-EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
-EMBEDDING_DEVICE = "cuda"  # GTX 1060 6GB
-
-# ============================================================================
-# 检索配置
-# ============================================================================
-RETRIEVAL_LAYERS = ["DM", "DWS", "ODS"]  # 检索优先级：从上到下
-RETRIEVAL_TOP_K = 5                       # 每层返回 top-K 结果
-RETRIEVAL_THRESHOLD = 0.5                 # 语义匹配相似度阈值
+RETRIEVAL_LAYERS = list(_config.retrieval_layers)
+RETRIEVAL_TOP_K = _config.retrieval_top_k
+RETRIEVAL_THRESHOLD = _config.retrieval_threshold
