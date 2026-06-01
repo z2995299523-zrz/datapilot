@@ -159,20 +159,38 @@ def cmd_analyze(args):
     # ── L2.5 预期结果比对 ──
     expected_report = None
     if args.expected and sql:
+        total_steps += 0.5
         print(f"步骤 4.5/{total_steps}: 预期结果比对...")
         try:
             from testing.expected_compare import compare_with_expected
             import pandas as pd
             import sqlite3
 
-            # 用 SQLite 内存库执行 SQL（demo 场景）
-            conn = sqlite3.connect(":memory:")
-            # 加载数据字典中的表作为内存表
-            data_dict = load_dictionary(args.dict)
-            # 简化的执行：仅做格式比对，实际环境需要连接真实 DB
-            print(f"  提示: L2.5 需要真实数据库连接。当前 demo 模式仅验证比对逻辑。")
-            print(f"  预期文件: {args.expected}")
-            expected_report = "enabled"  # 标记已启用
+            db_path = args.db
+            if not db_path:
+                print(f"  提示: 需要 --db 参数指定 SQLite 数据库路径才能执行比对")
+                print(f"  预期文件: {args.expected}")
+            elif not Path(db_path).exists():
+                print(f"  错误: 数据库文件不存在: {db_path}")
+            else:
+                conn = sqlite3.connect(db_path)
+                try:
+                    actual_df = pd.read_sql_query(sql, conn)
+                    report = compare_with_expected(actual_df, args.expected)
+                    expected_report = report
+                    print(f"  预期 {report.total_expected} 行 vs 实际 {report.total_actual} 行")
+                    if report.overall_passed:
+                        print(f"  ✅ 完全匹配 ({report.match_count} 行)")
+                    else:
+                        print(f"  ❌ {report.mismatch_count} 处差异")
+                        if report.missing_in_actual:
+                            print(f"     缺失行: {', '.join(report.missing_in_actual[:5])}")
+                        if report.extra_in_actual:
+                            print(f"     多余行: {', '.join(report.extra_in_actual[:5])}")
+                        if report.value_diffs:
+                            print(f"     数值偏差: {len(report.value_diffs)} 处")
+                finally:
+                    conn.close()
         except Exception as e:
             print(f"  预期比对失败: {e}")
 
@@ -181,7 +199,14 @@ def cmd_analyze(args):
             "concepts": extraction.concepts,
             "retrieval": result,
         }
-        print(_to_json(payload, pseudocode, sql))
+        output = _to_json(payload, pseudocode, sql)
+        # 如果是 JSON 输出且有预期比对报告，注入到输出中
+        if expected_report is not None:
+            import json as _json
+            output_dict = _json.loads(output)
+            output_dict["expected_comparison"] = expected_report.model_dump()
+            output = _json.dumps(output_dict, ensure_ascii=False, indent=2)
+        print(output)
         return
 
     # Markdown 输出
@@ -190,6 +215,27 @@ def cmd_analyze(args):
         "retrieval": result,
     }
     md = _format_markdown(payload, pseudocode, verbose=args.verbose, sql=sql)
+
+    # L2.5 预期比对结果追加到 Markdown
+    if expected_report is not None:
+        md += "\n## 预期结果比对 (L2.5)\n\n"
+        md += f"预期 {expected_report.total_expected} 行 vs 实际 {expected_report.total_actual} 行\n\n"
+        if expected_report.overall_passed:
+            md += f"✅ **完全匹配** ({expected_report.match_count} 行)\n\n"
+        else:
+            md += f"❌ **{expected_report.mismatch_count} 处差异**\n\n"
+            if expected_report.missing_in_actual:
+                md += f"- 缺失行: {', '.join(expected_report.missing_in_actual[:10])}\n"
+            if expected_report.extra_in_actual:
+                md += f"- 多余行: {', '.join(expected_report.extra_in_actual[:10])}\n"
+            if expected_report.value_diffs:
+                md += "- 数值偏差:\n"
+                for diff in expected_report.value_diffs[:10]:
+                    md += f"  - `{diff.key_values}`.{diff.column}: "
+                    md += f"预期={diff.expected_value}, 实际={diff.actual_value}, "
+                    md += f"偏差={diff.diff_percent:.1%}\n"
+        md += f"\n{expected_report.summary}\n\n"
+
     print(md)
 
 
@@ -224,6 +270,7 @@ def main():
     p_analyze.add_argument("--output", "-o", choices=["text", "json"], default="text", help="输出格式")
     p_analyze.add_argument("--sql", action="store_true", help="生成最终 SQL 脚本")
     p_analyze.add_argument("--expected", "-e", default="", help="预期结果 CSV 文件路径（L2.5 比对）")
+    p_analyze.add_argument("--db", default="", help="SQLite 数据库路径（执行 SQL 并比对预期结果）")
     p_analyze.add_argument("--verbose", "-v", action="store_true", help="显示详细检索日志")
 
     args = parser.parse_args()

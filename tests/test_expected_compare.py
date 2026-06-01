@@ -275,5 +275,95 @@ class TestReportFields:
         assert report.match_count == 3
 
 
+class TestDBIntegration:
+    """SQL 执行 + 预期比对 集成测试"""
+
+    def test_sqlite_execute_and_compare(self):
+        """在 SQLite 内存库中执行 SQL 并与预期 CSV 比对"""
+        import sqlite3
+        import tempfile
+        import os
+
+        # 1. 创建 SQLite 内存库 + 示例数据
+        conn = sqlite3.connect(":memory:")
+        conn.execute("""
+            CREATE TABLE customer_summary (
+                branch_id TEXT,
+                txn_amount REAL,
+                txn_count INTEGER
+            )
+        """)
+        conn.execute("INSERT INTO customer_summary VALUES ('B001', 1000.0, 10)")
+        conn.execute("INSERT INTO customer_summary VALUES ('B002', 2000.0, 20)")
+        conn.execute("INSERT INTO customer_summary VALUES ('B003', 3000.0, 30)")
+        conn.commit()
+
+        # 2. 生成预期 CSV
+        expected_df = pd.DataFrame({
+            "branch_id": ["B001", "B002", "B003"],
+            "txn_amount": [1000.0, 2000.0, 3000.0],
+            "txn_count": [10, 20, 30],
+        })
+        fd, expected_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        expected_df.to_csv(expected_path, index=False, encoding="utf-8")
+
+        try:
+            # 3. 执行 SQL 获取实际结果
+            sql = "SELECT branch_id, txn_amount, txn_count FROM customer_summary ORDER BY branch_id"
+            actual_df = pd.read_sql_query(sql, conn)
+
+            # 4. 比对
+            report = compare_with_expected(actual_df, expected_path)
+            assert report.overall_passed
+            assert report.total_expected == 3
+            assert report.total_actual == 3
+            assert report.match_count == 3
+            assert report.mismatch_count == 0
+        finally:
+            os.unlink(expected_path)
+            conn.close()
+
+    def test_sqlite_execute_and_compare_mismatch(self):
+        """SQL 执行结果与预期不一致时正确识别差异"""
+        import sqlite3
+        import tempfile
+        import os
+
+        # 实际数据比预期多一行，且 txn_amount 不同
+        conn = sqlite3.connect(":memory:")
+        conn.execute("""
+            CREATE TABLE customer_summary (
+                branch_id TEXT, txn_amount REAL, txn_count INTEGER
+            )
+        """)
+        conn.execute("INSERT INTO customer_summary VALUES ('B001', 1000.0, 10)")
+        conn.execute("INSERT INTO customer_summary VALUES ('B002', 2500.0, 20)")  # 预期是 2000
+        conn.execute("INSERT INTO customer_summary VALUES ('B004', 4000.0, 40)")  # 预期没有
+        conn.commit()
+
+        expected_df = pd.DataFrame({
+            "branch_id": ["B001", "B002", "B003"],
+            "txn_amount": [1000.0, 2000.0, 3000.0],
+            "txn_count": [10, 20, 30],
+        })
+        fd, expected_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        expected_df.to_csv(expected_path, index=False, encoding="utf-8")
+
+        try:
+            sql = "SELECT branch_id, txn_amount, txn_count FROM customer_summary ORDER BY branch_id"
+            actual_df = pd.read_sql_query(sql, conn)
+
+            report = compare_with_expected(actual_df, expected_path)
+            assert not report.overall_passed
+            assert len(report.missing_in_actual) == 1  # B003 缺失
+            assert len(report.extra_in_actual) == 1     # B004 多余
+            assert len(report.value_diffs) >= 1          # B002 数值偏差
+        finally:
+            os.unlink(expected_path)
+            conn.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
