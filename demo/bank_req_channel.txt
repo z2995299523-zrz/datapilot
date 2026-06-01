@@ -1,0 +1,20 @@
+# 渠道运营日报分析
+
+## 业务需求
+生成各交易渠道的每日运营报表，分析线上/线下渠道的交易量、交易金额和客户使用情况，为渠道优化提供数据支撑。
+
+## 分析维度
+1. 按渠道代码(channel_code)和日期(date_id)分组统计交易数据
+2. 区分线上渠道(手机银行mobile、线上无卡card_not_present)和线下渠道(POS刷卡card_present、ATM、柜面branch、电汇wire)
+3. 统计每渠道每日的交易笔数(txn_count)、交易总额(total_amount)、活跃客户数(unique_customers)
+4. 标记可疑交易数(suspicious_count)超过当日交易总量5%的渠道-日期组合
+
+## 筛选条件
+- 仅分析已完成状态(status = completed)的交易
+- 排除测试交易和内部转账(internal)
+- 时间范围：2024年全年按月汇总
+
+## 输出要求
+- 按交易总额降序排列
+- 包含渠道中文名称(通过dim_channel关联)
+- 区分渠道大类(线上/线下)
