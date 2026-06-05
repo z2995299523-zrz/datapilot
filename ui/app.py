@@ -24,6 +24,9 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── 注入黑暗主题 CSS ──
+from ui.theme import DARK_THEME_CSS
+st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
 
 def _parse_requirement_file(uploaded_file) -> str:
     """从上传的需求文档中提取文本。
@@ -93,18 +96,35 @@ if page == "📚 数据字典管理":
         if tmp_path.endswith(".xlsx"):
             df = pd.read_excel(tmp_path)
         else:
-            df = pd.read_csv(tmp_path)
+            df = pd.read_csv(tmp_path, encoding="utf-8-sig")
         st.dataframe(df.head(20), use_container_width=True)
         st.caption(f"共 {len(df)} 行")
 
-        # Check required columns
-        required = ["layer", "table_name", "column_name"]
-        missing = [c for c in required if c not in df.columns]
-        if missing:
-            st.error(f"❌ 缺少必要列: {', '.join(missing)}。请检查文件格式。")
+        # Check required columns（使用与 loader 相同的中英文列名推断）
+        from dictionary.loader import _infer_column
+        columns = list(df.columns)
+        col_layer = _infer_column(columns, "layer")
+        col_table_name = _infer_column(columns, "table_name")
+        col_column_name = _infer_column(columns, "column_name")
+
+        missing_cols = []
+        for label, col in [("layer/分层", col_layer), ("table_name/表名", col_table_name), ("column_name/字段名", col_column_name)]:
+            if col is None:
+                missing_cols.append(label)
+        if missing_cols:
+            st.error(f"❌ 缺少必要列: {', '.join(missing_cols)}。可用列: {columns}")
         else:
-            detected_layers = df['layer'].dropna().unique()
+            detected_layers = df[col_layer].dropna().unique()
             st.success(f"✅ 列结构正确。检测到 {len(detected_layers)} 个数据层: {', '.join(detected_layers)}")
+
+            # 保存到稳定路径，供其他页面使用（需求分析、修复闭环）
+            import shutil
+            stable_dir = Path(__file__).parent.parent / "data"
+            stable_dir.mkdir(parents=True, exist_ok=True)
+            stable_path = stable_dir / f"uploaded_dict{suffix}"
+            shutil.copy(tmp_path, stable_path)
+            st.session_state["data_dict_path"] = str(stable_path)
+            st.caption(f"📁 已缓存到 {stable_path}")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -173,6 +193,16 @@ elif page == "🔍 需求分析":
         st.warning("⚠ 请先在「数据字典管理」页面构建索引。")
         st.stop()
 
+    # ── 恢复需求文本（必须在 text_area 渲染之前设置 key） ──
+    cache = st.session_state.get("analysis_cache")
+    cached_requirement = cache.get("requirement_text", "") if cache else ""
+
+    # 来源优先级：新上传的文件 > 缓存的文本 > 空
+    if "req_upload_pending" in st.session_state:
+        st.session_state["req_text"] = st.session_state.pop("req_upload_pending")
+    elif cached_requirement and not st.session_state.get("req_text", ""):
+        st.session_state["req_text"] = cached_requirement
+
     # Input
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -188,12 +218,28 @@ elif page == "🔍 需求分析":
             help="支持 .txt / .md / .docx 格式",
         )
         if uploaded_req:
-            requirement_text = _parse_requirement_file(uploaded_req)
-            st.text_area("已加载文件", requirement_text, height=200, disabled=True)
+            # 检查是否已处理过（避免 st.rerun 死循环）
+            last_name = st.session_state.get("req_upload_name", "")
+            if uploaded_req.name != last_name:
+                requirement_text = _parse_requirement_file(uploaded_req)
+                st.session_state["req_upload_name"] = uploaded_req.name
+                st.session_state["req_upload_pending"] = requirement_text
+                st.rerun()
 
     generate_sql = st.checkbox("生成 SQL 脚本", value=True)
 
-    if st.button("🚀 开始分析", type="primary", disabled=not requirement_text.strip()):
+    # ── 缓存检查 ──
+    cache_valid = bool(
+        cache is not None
+        and requirement_text.strip()
+        and cached_requirement == requirement_text
+    )
+
+    # 单按钮：点击 → 重新分析；未点击 → 有缓存则恢复
+    run_clicked = st.button("🚀 开始分析", type="primary", disabled=not requirement_text.strip())
+
+    if run_clicked:
+        # ── 执行新分析 ──
         from config import CHROMA_COLLECTION, CHROMA_DIR
         from chromadb import PersistentClient
         from chromadb.config import Settings as ChromaSettings
@@ -238,7 +284,7 @@ elif page == "🔍 需求分析":
                     st.warning(f"**[未匹配] {m.concept}** — {m.message}")
 
             if result.unmatched_concepts:
-                st.error(f"待确认: {', '.join(result.unmatched_concepts)}")
+                st.error(f"⚠ 待确认: {', '.join(result.unmatched_concepts)}")
 
         # Step 3: Pseudocode generation
         with st.spinner("步骤 3/3: 生成分析伪代码..."):
@@ -266,21 +312,102 @@ elif page == "🔍 需求分析":
             if pseudocode.notes:
                 st.info("📝 备注:\n" + "\n".join(f"- {n}" for n in pseudocode.notes))
 
-        # Step 4: SQL generation (optional)
+        # Step 4: SQL generation — CTE 链式脚本
+        sql = ""
         if generate_sql:
-            with st.spinner("生成 SQL 脚本..."):
+            with st.spinner("生成 SQL 脚本（CTE 链式）..."):
                 from dictionary.loader import load_dictionary
-                from generator.script import generate_sql as gen_sql
+                from generator.script import generate_sql_script
                 from pathlib import Path
-                demo_path = Path(__file__).parent.parent / "demo" / "data_dict.csv"
-                data_dict = load_dictionary(str(demo_path))
+                # 优先使用上传的数据字典，fallback 到 demo
+                dict_path = st.session_state.get("data_dict_path")
+                if not dict_path or not Path(dict_path).exists():
+                    dict_path = Path(__file__).parent.parent / "demo" / "data_dict.csv"
+                data_dict = load_dictionary(str(dict_path))
                 tables = {t.table_name: t for t in data_dict.tables}
-                sql = gen_sql(pseudocode, tables)
+                sql = generate_sql_script(
+                    pseudocode=pseudocode,
+                    tables=tables,
+                    unmatched_concepts=result.unmatched_concepts,
+                    requirement_summary=requirement_text[:100],
+                )
 
-            with st.expander("💾 生成 SQL", expanded=True):
+            with st.expander("💾 生成 SQL（CTE 链式脚本）", expanded=True):
                 st.code(sql, language="sql")
                 st.download_button(
-                    "📥 下载 SQL",
+                    "📥 下载完整 SQL 脚本",
+                    sql,
+                    file_name="analysis.sql",
+                    mime="text/plain",
+                )
+
+        # ── 保存缓存 ──
+        st.session_state["analysis_cache"] = {
+            "extraction": extraction,
+            "retrieval": result,
+            "pseudocode": pseudocode,
+            "sql": sql,
+            "requirement_text": requirement_text,
+        }
+
+    elif cache_valid:
+        # ── 从缓存恢复 ──
+        extraction = cache["extraction"]
+        result = cache["retrieval"]
+        pseudocode = cache["pseudocode"]
+        sql = cache["sql"]
+        st.success("📦 从缓存恢复 — 切换页面无需重新分析")
+
+        with st.expander(f"📊 步骤 1/3: 提取到 {len(extraction.concepts)} 个业务概念", expanded=True):
+            for c in extraction.concepts:
+                candidates = f" ({', '.join(c.candidates)})" if c.candidates else ""
+                st.markdown(f"- **[{c.type.value}] {c.concept}**{candidates}")
+                if c.qualifier:
+                    st.caption(f"  限定: `{c.qualifier}`")
+
+        matched_count = sum(1 for m in result.matches if m.matched)
+        with st.expander(f"🔍 步骤 2/3: 匹配 {matched_count}/{len(result.matches)}，未匹配 {len(result.unmatched_concepts)}", expanded=True):
+            for m in result.matches:
+                if m.matched:
+                    codes_info = ""
+                    for col in m.columns:
+                        if col.code_values:
+                            codes = ", ".join(f"{cv.value}={cv.meaning}" for cv in col.code_values[:6])
+                            codes_info += f"  - {col.name}: {codes}\n"
+                    st.success(f"**[{m.layer.value}层] {m.table_name}** (score={m.score:.2f})")
+                    st.caption(m.table_comment)
+                    if codes_info:
+                        st.code(codes_info.strip(), language=None)
+                else:
+                    st.warning(f"**[未匹配] {m.concept}** — {m.message}")
+            if result.unmatched_concepts:
+                st.error(f"⚠ 待确认: {', '.join(result.unmatched_concepts)}")
+
+        with st.expander(f"📝 步骤 3/3: {pseudocode.title}", expanded=True):
+            for step in pseudocode.steps:
+                st.markdown(f"**步骤 {step.step_number}: {step.description}**")
+                details = []
+                if step.source_table:
+                    details.append(f"- 源表: `{step.source_table}`")
+                for cond in step.conditions:
+                    details.append(f"- 条件: `{cond}`")
+                for join in step.joins:
+                    details.append(f"- 关联: `{join}`")
+                for agg in step.aggregations:
+                    details.append(f"- 聚合: `{agg}`")
+                if step.output:
+                    details.append(f"- 输出: {step.output}")
+                st.markdown("\n".join(details))
+            if pseudocode.todo_items:
+                st.warning("⚠ 待确认:\n" + "\n".join(f"- {t}" for t in pseudocode.todo_items))
+            if pseudocode.notes:
+                st.info("📝 备注:\n" + "\n".join(f"- {n}" for n in pseudocode.notes))
+
+        if sql:
+            with st.expander("💾 生成 SQL（CTE 链式脚本）", expanded=True):
+                st.code(sql, language="sql")
+                st.download_button(
+                    "📥 下载完整 SQL 脚本",
                     sql,
                     file_name="analysis.sql",
                     mime="text/plain",
@@ -441,8 +568,10 @@ elif page == "🔧 修复闭环":
         # Build column info from demo dict for demo purposes
         from pathlib import Path
         from dictionary.loader import load_dictionary
-        demo_path = Path(__file__).parent.parent / "demo" / "data_dict.csv"
-        data_dict = load_dictionary(str(demo_path))
+        dict_path = st.session_state.get("data_dict_path")
+        if not dict_path or not Path(dict_path).exists():
+            dict_path = Path(__file__).parent.parent / "demo" / "data_dict.csv"
+        data_dict = load_dictionary(str(dict_path))
 
         # Extract columns from the first DM table as demo columns
         dm_tables = [t for t in data_dict.tables if t.layer.value == "DM"]
