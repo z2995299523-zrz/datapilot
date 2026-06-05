@@ -13,6 +13,7 @@ import { Layout, Menu, Typography, Badge } from 'antd';
 import {
   BookOutlined,
   SearchOutlined,
+  BuildOutlined,
   ToolOutlined,
   ApiOutlined,
 } from '@ant-design/icons';
@@ -24,6 +25,7 @@ const { Sider, Content } = Layout;
 const menuItems = [
   { key: '/dictionary', icon: <BookOutlined />, label: '数据字典管理' },
   { key: '/analysis', icon: <SearchOutlined />, label: '需求分析' },
+  { key: '/modeling', icon: <BuildOutlined />, label: '数仓建模' },
   { key: '/reconciliation', icon: <ToolOutlined />, label: '修复闭环' },
 ];
 

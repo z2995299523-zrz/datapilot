@@ -67,3 +67,13 @@ class PreviewResponse(BaseModel):
     rows: list[list]
     total_rows: int = 0
     error: str = ""
+
+
+class SchemaUploadResponse(BaseModel):
+    """数仓建模 schema 上传结果"""
+    success: bool
+    source_name: str = ""
+    tables_detected: int = 0
+    columns_detected: int = 0
+    saved_path: str = ""
+    error: str = ""

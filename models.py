@@ -15,6 +15,7 @@ from enum import Enum
 class DataLayer(str, Enum):
     """数据分层 — 检索优先级从高到低"""
     DM = "DM"    # 数据集市层，最接近业务
+    ADS = "ADS"  # 应用数据服务层 — 面向具体应用场景的聚合视图
     DWS = "DWS"  # 数据服务层
     ODS = "ODS"  # 原始数据层
 
@@ -247,3 +248,128 @@ class LLMTestSuiteResponse(BaseModel):
     suite_description: str = Field(default="", description="测试套件概述")
     test_cases: list[LLMTestCase] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list, description="补充说明")
+
+
+# ============================================================================
+# 数仓建模引擎模型 (DW Modeling Engine)
+# ============================================================================
+
+class TableRole(str, Enum):
+    """表在数仓模型中的角色"""
+    FACT = "fact"               # 事实表：度量值 + 指向维度的外键
+    DIMENSION = "dimension"     # 维表：描述性属性，参照表
+    BRIDGE = "bridge"           # 桥接表：解决 M:N 关系，仅含外键
+    AGGREGATE = "aggregate"     # 汇总表：预聚合结果
+    UNKNOWN = "unknown"         # 无法分类
+
+
+class SchemaType(str, Enum):
+    """数仓建模模式类型"""
+    STAR = "star"               # 星型模型：中心事实表 + 直接维表
+    SNOWFLAKE = "snowflake"     # 雪花模型：维表进一步规范化
+    THREEF_NF = "3nf"           # 三范式：完全规范化
+    UNKNOWN = "unknown"
+
+
+class RelationshipType(str, Enum):
+    """表关系基数"""
+    ONE_TO_MANY = "1:N"
+    MANY_TO_ONE = "N:1"
+    MANY_TO_MANY = "M:N"
+
+
+class QualitySeverity(str, Enum):
+    """质量问题严重度"""
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+
+
+class ConsistencyRule(str, Enum):
+    """口径一致性规则"""
+    SAME_NAME_SAME_MEANING = "same_name_same_meaning"
+    SAME_FIELD_SAME_CALIBER = "same_field_same_caliber"
+    PK_TYPE_MATCHES_FK_TYPE = "pk_type_matches_fk_type"
+    CODE_CONSISTENCY = "code_consistency"
+    DIMENSION_CONFORMITY = "dimension_conformity"
+    CROSS_LAYER_CONSISTENCY = "cross_layer_consistency"
+
+
+class TableRelationship(BaseModel):
+    """两张表之间的外键关系"""
+    source_table: str
+    source_column: str
+    target_table: str
+    target_column: str
+    relationship_type: RelationshipType = RelationshipType.MANY_TO_ONE
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    detection_method: str = ""  # "explicit_fk" | "name_match" | "semantic_match" | "type_match" | "llm"
+
+
+class CodeCandidate(BaseModel):
+    """检测到的候选码值列"""
+    column_name: str
+    table_name: str
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    detection_reason: str = ""
+    candidate_values: list[CodeMapping] = Field(default_factory=list)
+
+
+class TableClassification(BaseModel):
+    """单表的角色 + 分层分类结果"""
+    table_name: str
+    role: TableRole = TableRole.UNKNOWN
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reasoning: str = ""
+    layer: Optional[DataLayer] = None
+    score_detail: dict = Field(default_factory=dict)  # {FACT: 2.5, DIMENSION: 1.0, ...}
+
+
+class QualityIssue(BaseModel):
+    """口径一致性校验发现的问题"""
+    rule: ConsistencyRule
+    severity: QualitySeverity = QualitySeverity.WARNING
+    table: str = ""
+    column: str = ""
+    description: str = ""
+    suggestion: str = ""
+
+
+class SchemaDefinition(BaseModel):
+    """一个完整的数仓模式（星型/雪花/3NF）"""
+    name: str
+    schema_type: SchemaType = SchemaType.UNKNOWN
+    tables: list[str] = Field(default_factory=list)  # table names
+    relationships: list[TableRelationship] = Field(default_factory=list)
+    description: str = ""
+
+
+class ModelingResult(BaseModel):
+    """数仓建模引擎的完整输出"""
+    source_name: str = ""
+    layers: dict[str, list[str]] = Field(default_factory=dict)  # {layer: [table_names]}
+    classifications: dict[str, TableClassification] = Field(default_factory=dict)  # {table_name: ...}
+    relationships: list[TableRelationship] = Field(default_factory=list)
+    code_columns: list[CodeCandidate] = Field(default_factory=list)
+    schemas: list[SchemaDefinition] = Field(default_factory=list)
+    quality_issues: list[QualityIssue] = Field(default_factory=list)
+    total_tables: int = 0
+    llm_used: bool = False
+    metadata: dict = Field(default_factory=dict)
+
+
+class ModelingRequest(BaseModel):
+    """数仓建模请求"""
+    source_name: str = ""
+    tables: list[TableInfo] = Field(default_factory=list)
+    enable_llm: bool = True
+    detect_codes: bool = True
+    validate_quality: bool = True
+
+
+class EvolveRequest(BaseModel):
+    """模型演进请求 — 新增源表合并到已有模型"""
+    existing_model: ModelingResult = Field(default_factory=ModelingResult)
+    new_tables: list[TableInfo] = Field(default_factory=list)
+    merge_strategy: str = "auto"  # "auto" | "create_new" | "merge"
+    enable_llm: bool = True

@@ -10,6 +10,7 @@ import AppLayout from './components/Layout';
 import DictionaryPage from './pages/DictionaryPage';
 import AnalysisPage from './pages/AnalysisPage';
 import ReconciliationPage from './pages/ReconciliationPage';
+import ModelingPage from './pages/ModelingPage';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
               <Route path="dictionary" element={<DictionaryPage />} />
               <Route path="analysis" element={<AnalysisPage />} />
               <Route path="reconciliation" element={<ReconciliationPage />} />
+              <Route path="modeling" element={<ModelingPage />} />
               <Route path="*" element={<Navigate to="/dictionary" replace />} />
             </Route>
           </Routes>
