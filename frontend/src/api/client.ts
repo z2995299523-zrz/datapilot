@@ -1,5 +1,5 @@
 /**
- * Axios 实例 — 统一 baseURL、超时、错误处理
+ * Axios instance — baseURL, timeout, JWT token, 401 handling
  */
 
 import axios from 'axios';
@@ -8,17 +8,34 @@ const API_BASE = 'http://localhost:8000';
 
 export const api = axios.create({
   baseURL: API_BASE,
-  timeout: 180_000, // 分析可能耗时 30-60s
+  timeout: 180_000, // Analysis can take 30-60s
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Request interceptor: attach JWT token from localStorage
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor: handle 401 (expired/invalid token)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.code === 'ECONNABORTED') {
-      console.error('请求超时');
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // Redirect to login if not already there
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    } else if (error.code === 'ECONNABORTED') {
+      console.error('Request timeout');
     } else if (!error.response) {
-      console.error('无法连接后端服务, 请确认 python -m uvicorn backend.main:app --port 8000 已启动');
+      console.error('Cannot connect to backend. Please ensure the server is running on port 8000.');
     }
     return Promise.reject(error);
   },
