@@ -7,30 +7,43 @@
  *   /reconciliation  — 修复闭环
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { Layout, Menu, Typography, Badge } from 'antd';
+import { Layout, Menu, Typography, Badge, Button } from 'antd';
 import {
   BookOutlined,
   SearchOutlined,
   BuildOutlined,
   ToolOutlined,
   ApiOutlined,
+  UserOutlined,
+  LogoutOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
+
+import { useAuth } from '../auth/AuthContext';
 
 import { dictionaryApi } from '../api/dictionary';
 
 const { Sider, Content } = Layout;
 
-const menuItems = [
-  { key: '/dictionary', icon: <BookOutlined />, label: '数据字典管理' },
-  { key: '/analysis', icon: <SearchOutlined />, label: '需求分析' },
-  { key: '/modeling', icon: <BuildOutlined />, label: '数仓建模' },
-  { key: '/reconciliation', icon: <ToolOutlined />, label: '修复闭环' },
-];
-
 export default function AppLayout() {
+  const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
+
+  const menuItems = useMemo(() => {
+    const items = [
+      { key: '/dictionary', icon: <BookOutlined />, label: '数据字典管理' },
+      { key: '/analysis', icon: <SearchOutlined />, label: '需求分析' },
+      { key: '/modeling', icon: <BuildOutlined />, label: '数仓建模' },
+      { key: '/reconciliation', icon: <ToolOutlined />, label: '修复闭环' },
+    ];
+    if (isAdmin) {
+      items.push({ key: '/admin', icon: <SettingOutlined />, label: '系统管理' });
+    }
+    return items;
+  }, [isAdmin]);
+
   const [indexReady, setIndexReady] = useState(false);
   const [indexCount, setIndexCount] = useState(0);
 
@@ -85,6 +98,46 @@ export default function AppLayout() {
           style={{ borderInlineEnd: 'none', marginTop: 8 }}
           theme="dark"
         />
+
+        {/* User info section */}
+        {user && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 68,
+              left: 0,
+              right: 0,
+              padding: '12px 20px',
+              borderTop: '1px solid #2D333B',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <UserOutlined style={{ color: '#9099A4' }} />
+              <Typography.Text style={{ color: '#E0E3E8', fontSize: 13 }}>
+                {user.real_name}
+              </Typography.Text>
+            </div>
+            {user.department_path && (
+              <Typography.Text style={{ color: '#6E7681', fontSize: 11, display: 'block' }}>
+                🏢 {user.department_path.replace(/^\//, '').replace(/\//g, ' / ')}
+              </Typography.Text>
+            )}
+            {user.business_line_codes.length > 0 && (
+              <Typography.Text style={{ color: '#6E7681', fontSize: 11, display: 'block' }}>
+                📊 {user.business_line_codes.join(', ')}
+              </Typography.Text>
+            )}
+            <Button
+              type="text"
+              size="small"
+              icon={<LogoutOutlined />}
+              onClick={() => { logout(); navigate('/login'); }}
+              style={{ color: '#6E7681', marginTop: 4, padding: 0 }}
+            >
+              登出
+            </Button>
+          </div>
+        )}
 
         {/* Status footer */}
         <div
