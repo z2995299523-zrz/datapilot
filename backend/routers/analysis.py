@@ -64,9 +64,15 @@ async def analyze_full(req: AnalysisRequest, user: dict = Depends(get_current_us
             result["error"] = f"概念提取 LLM 错误: {extraction.llm_error}"
             return result
 
-        # Step 2: Retrieval
+        # Step 2: Retrieval — pass business line filter
         from retrieval.engine import search
-        retrieval = search(extraction.concepts, collection)
+        is_admin = user.get("is_admin", False)
+        business_line_codes = None if is_admin else user.get("business_line_codes", [])
+        user_permissions = None if is_admin else user
+        if not is_admin and business_line_codes:
+            retrieval = search(extraction.concepts, collection, visible_business_lines=business_line_codes)
+        else:
+            retrieval = search(extraction.concepts, collection)
         result["retrieval"] = retrieval.model_dump()
 
         # Step 3: Pseudocode generation
@@ -92,6 +98,7 @@ async def analyze_full(req: AnalysisRequest, user: dict = Depends(get_current_us
                     tables=tables,
                     unmatched_concepts=retrieval.unmatched_concepts,
                     requirement_summary=req.requirement_text[:100],
+                    user_permissions=user_permissions,
                 )
                 result["sql"] = sql
 
