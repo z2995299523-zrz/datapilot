@@ -77,3 +77,68 @@ class SchemaUploadResponse(BaseModel):
     columns_detected: int = 0
     saved_path: str = ""
     error: str = ""
+
+
+# ── 认证 ────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    """登录请求"""
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+
+class UserInfo(BaseModel):
+    """当前用户信息（含权限）"""
+    user_id: int
+    username: str
+    real_name: str
+    is_admin: bool
+    department_id: int | None = None
+    department_path: str = ""
+    visible_dept_ids: list[int] = []
+    business_line_codes: list[str] = []
+
+
+class LoginResponse(BaseModel):
+    """登录响应"""
+    token: str
+    user: UserInfo
+
+
+class AdminUserCreate(BaseModel):
+    """创建用户请求"""
+    username: str = Field(..., min_length=2, max_length=50)
+    password: str = Field(..., min_length=6)
+    real_name: str = Field(..., min_length=1)
+    department_id: int
+    business_line_ids: list[int] = []
+    is_admin: bool = False
+
+
+class AdminUserUpdate(BaseModel):
+    """修改用户请求 — 所有字段可选"""
+    real_name: str | None = None
+    department_id: int | None = None
+    business_line_ids: list[int] | None = None
+    is_admin: bool | None = None
+    is_active: bool | None = None
+    new_password: str | None = Field(None, min_length=6)
+
+
+class AdminDepartmentCreate(BaseModel):
+    """创建部门请求"""
+    name: str = Field(..., min_length=1)
+    parent_id: int | None = None
+
+
+class AdminBusinessLineCreate(BaseModel):
+    """创建业务条线请求"""
+    name: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=2, max_length=30)
+    description: str = ""
+
+
+class AdminTableLineMapping(BaseModel):
+    """表-条线映射请求"""
+    table_name: str
+    business_line_id: int
