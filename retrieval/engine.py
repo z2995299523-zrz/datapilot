@@ -19,6 +19,7 @@ def search(
     top_k: int = RETRIEVAL_TOP_K,
     threshold: float = RETRIEVAL_THRESHOLD,
     db_conn=None,
+    visible_business_lines: list[str] | None = None,
 ) -> RetrievalResult:
     """分层递进检索
 
@@ -119,6 +120,24 @@ def search(
 
     # 去重 + 排序
     final_matches = rank_matches(all_matches)
+
+    # ── 业务条线过滤 ──
+    if visible_business_lines:
+        from auth.database import get_session
+        from auth.models import table_business_lines as tbl, BusinessLine
+
+        with get_session() as session:
+            rows = session.query(tbl.c.table_name).join(
+                BusinessLine, tbl.c.business_line_id == BusinessLine.id
+            ).filter(
+                BusinessLine.code.in_(visible_business_lines)
+            ).all()
+            allowed_tables = {r.table_name for r in rows}
+
+        for m in final_matches:
+            if m.matched and m.table_name and m.table_name not in allowed_tables:
+                m.matched = False
+                m.message = f"无权限访问表 {m.table_name}（业务条线限制）"
 
     return RetrievalResult(
         matches=final_matches,
