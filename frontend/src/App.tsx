@@ -13,6 +13,7 @@ import DictionaryPage from './pages/DictionaryPage';
 import AnalysisPage from './pages/AnalysisPage';
 import ReconciliationPage from './pages/ReconciliationPage';
 import ModelingPage from './pages/ModelingPage';
+import AdminPage from './pages/AdminPage';
 
 /** Route guard: redirect to /login if not authenticated */
 function ProtectedRoute() {
@@ -55,9 +56,9 @@ export default function App() {
                   <Route path="analysis" element={<AnalysisPage />} />
                   <Route path="modeling" element={<ModelingPage />} />
                   <Route path="reconciliation" element={<ReconciliationPage />} />
-                  {/* Admin-only routes (AdminPage coming in Task 9) */}
+                  {/* Admin-only routes */}
                   <Route element={<AdminRoute />}>
-                    {/* AdminPage will be added here in Task 9 */}
+                    <Route path="admin" element={<AdminPage />} />
                   </Route>
                   <Route path="*" element={<Navigate to="/dictionary" replace />} />
                 </Route>
