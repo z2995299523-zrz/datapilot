@@ -7,7 +7,9 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
+
+from backend.auth import get_current_user
 
 from models import (ModelingRequest, ModelingResult, EvolveRequest,
                     TableInfo, DataLayer)
@@ -23,7 +25,7 @@ _latest_result: ModelingResult | None = None
 
 
 @router.post("/upload", response_model=SchemaUploadResponse)
-async def upload_schema(file: UploadFile = File(...)):
+async def upload_schema(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """上传业务数据库 schema 文件（CSV/XLSX），返回解析后的表结构预览"""
     if not (file.filename.endswith(".csv") or file.filename.endswith(".xlsx")):
         return SchemaUploadResponse(success=False, error=f"不支持的文件类型: {file.filename}")
@@ -75,7 +77,7 @@ async def upload_schema(file: UploadFile = File(...)):
 
 
 @router.post("/analyze", response_model=ModelingResult)
-async def analyze(req: ModelingRequest):
+async def analyze(req: ModelingRequest, user: dict = Depends(get_current_user)):
     """全链路一键数仓建模"""
     from modeling.engine import run_modeling
     global _latest_result
@@ -85,7 +87,7 @@ async def analyze(req: ModelingRequest):
 
 
 @router.post("/classify")
-async def classify(req: ModelingRequest):
+async def classify(req: ModelingRequest, user: dict = Depends(get_current_user)):
     """仅表角色分类"""
     from modeling.classifier import classify_all
     result = classify_all(req.tables, llm_enabled=req.enable_llm)
@@ -93,7 +95,7 @@ async def classify(req: ModelingRequest):
 
 
 @router.post("/detect-relations")
-async def detect_relations(req: ModelingRequest):
+async def detect_relations(req: ModelingRequest, user: dict = Depends(get_current_user)):
     """仅 FK-PK 关系检测"""
     from modeling.relation_detector import detect_relationships
     result = detect_relationships(req.tables, llm_enabled=req.enable_llm)
@@ -101,7 +103,7 @@ async def detect_relations(req: ModelingRequest):
 
 
 @router.post("/detect-codes")
-async def detect_codes(req: ModelingRequest):
+async def detect_codes(req: ModelingRequest, user: dict = Depends(get_current_user)):
     """仅码值列检测"""
     from modeling.code_detector import detect_code_columns
     result = detect_code_columns(req.tables)
@@ -109,7 +111,7 @@ async def detect_codes(req: ModelingRequest):
 
 
 @router.post("/validate")
-async def validate(req: ModelingRequest):
+async def validate(req: ModelingRequest, user: dict = Depends(get_current_user)):
     """仅质量校验（需要先运行 analyze）"""
     from modeling.quality_validator import validate_quality
     result = validate_quality(
@@ -120,7 +122,7 @@ async def validate(req: ModelingRequest):
 
 
 @router.post("/schema")
-async def detect_schema(req: ModelingRequest):
+async def detect_schema(req: ModelingRequest, user: dict = Depends(get_current_user)):
     """仅模式分类（需要先运行 classify）"""
     from modeling.classifier import classify_all
     from modeling.relation_detector import detect_relationships
@@ -134,7 +136,7 @@ async def detect_schema(req: ModelingRequest):
 
 
 @router.post("/evolve", response_model=ModelingResult)
-async def evolve(req: EvolveRequest):
+async def evolve(req: EvolveRequest, user: dict = Depends(get_current_user)):
     """模型演进：在已有模型基础上新增/合并表"""
     from modeling.evolve import evolve_model
     global _latest_result
@@ -144,7 +146,7 @@ async def evolve(req: EvolveRequest):
 
 
 @router.get("/result")
-async def get_result():
+async def get_result(user: dict = Depends(get_current_user)):
     """获取最近一次建模结果"""
     global _latest_result
     if _latest_result is None:

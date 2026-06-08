@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, File, UploadFile, Query
+from fastapi import APIRouter, Depends, File, UploadFile, Query
+
+from backend.auth import get_current_user
 
 from backend.schemas import IndexStatusResponse, PreviewResponse, UploadResponse
 
@@ -37,7 +39,7 @@ def _get_collection() -> tuple[Any | None, str]:
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_dictionary(file: UploadFile = File(...)):
+async def upload_dictionary(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """上传数据字典文件（CSV/XLSX），构建 ChromaDB 索引"""
     # Validate file type
     if not (file.filename.endswith(".csv") or file.filename.endswith(".xlsx")):

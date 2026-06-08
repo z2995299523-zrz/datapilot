@@ -22,6 +22,10 @@ os.environ.setdefault("EMBEDDING_DEVICE", "cpu")
 from embedding import get_embedding_model
 get_embedding_model()
 
+# 初始化 Auth 数据库（表创建 + 种子数据）
+from auth.database import init_db
+init_db()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

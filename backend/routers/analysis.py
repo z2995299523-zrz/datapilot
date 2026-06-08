@@ -5,7 +5,9 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from backend.auth import get_current_user
 
 from backend.schemas import AnalysisRequest
 
@@ -36,7 +38,7 @@ def _resolve_dict_path(dict_path: str | None) -> str:
 
 
 @router.post("/full")
-async def analyze_full(req: AnalysisRequest):
+async def analyze_full(req: AnalysisRequest, user: dict = Depends(get_current_user)):
     """全链路分析：概念提取 → 分层检索 → 伪代码 → SQL
 
     返回所有中间结果供前端分步展示。
@@ -100,7 +102,7 @@ async def analyze_full(req: AnalysisRequest):
 
 
 @router.post("/compare")
-async def compare_expected(req: dict):
+async def compare_expected(req: dict, user: dict = Depends(get_current_user)):
     """执行 SQL 并与预期 CSV 逐行逐列比对
 
     请求体:

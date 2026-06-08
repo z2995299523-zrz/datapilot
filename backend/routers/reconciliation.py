@@ -5,7 +5,9 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from backend.auth import get_current_user
 
 from backend.schemas import ReconciliationRunRequest, ReconciliationTestsRequest
 
@@ -35,7 +37,7 @@ def _load_column_infos(dict_path: str) -> list:
 
 
 @router.post("/run")
-async def run_reconciliation(req: ReconciliationRunRequest):
+async def run_reconciliation(req: ReconciliationRunRequest, user: dict = Depends(get_current_user)):
     """运行完整修复闭环：测试 → 诊断 → 修复 → 重测"""
     if not req.original_sql.strip():
         return {"status": "error", "error_message": "SQL 不能为空"}
@@ -94,7 +96,7 @@ async def run_reconciliation(req: ReconciliationRunRequest):
 
 
 @router.post("/tests")
-async def run_tests_only(req: ReconciliationTestsRequest):
+async def run_tests_only(req: ReconciliationTestsRequest, user: dict = Depends(get_current_user)):
     """仅运行 L1 质量测试（不进入修复闭环）"""
     if not req.original_sql.strip():
         return {"error": "SQL 不能为空"}
