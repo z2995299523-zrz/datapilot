@@ -653,7 +653,7 @@ SCHEMA = {
 # Write data_dict.csv (matches dictionary/loader.py expected format)
 dict_path = DEMO_DIR / "bank_data_dict.csv"
 total_tables = 0
-with open(dict_path, "w", newline="", encoding="utf-8-sig") as f:
+with open(dict_path, "w", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
     writer.writerow(["分层", "表名", "表注释", "字段名", "字段类型", "字段注释",
                       "码值", "关联表", "主键"])

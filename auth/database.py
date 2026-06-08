@@ -9,13 +9,21 @@ _engine = None
 _SessionLocal = None
 
 
-def init_db(db_url: str = "sqlite:///data/auth.db") -> None:
-    """Create tables and seed data. Idempotent — skips if tables exist."""
+def init_db(db_url: str = "sqlite:///data/auth.db", poolclass=None) -> None:
+    """Create tables and seed data. Idempotent — skips if tables exist.
+
+    Args:
+        db_url: SQLAlchemy database URL.
+        poolclass: Optional pool class override (e.g. StaticPool for in-memory tests).
+    """
     global _engine, _SessionLocal
     import os
     # Ensure data directory exists
     os.makedirs("data", exist_ok=True)
-    _engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    engine_kwargs = {"connect_args": {"check_same_thread": False}}
+    if poolclass is not None:
+        engine_kwargs["poolclass"] = poolclass
+    _engine = create_engine(db_url, **engine_kwargs)
     Base.metadata.create_all(_engine)
     _SessionLocal = sessionmaker(bind=_engine)
     # Seed only if no users exist

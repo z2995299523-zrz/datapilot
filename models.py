@@ -45,6 +45,7 @@ class TableInfo(BaseModel):
     schema_name: str = Field(default="", description="数据库/schema 名")
     columns: list[ColumnInfo] = Field(default_factory=list)
     source_file: str = Field(default="", description="来源文件")
+    source_system: str = Field(default="", description="源系统名称，如'核心银行系统'、'AML反洗钱系统'")
 
 
 class DataDictionary(BaseModel):

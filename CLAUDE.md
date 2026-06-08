@@ -22,12 +22,20 @@ export DEEPSEEK_API_KEY=your-key       # Linux/Mac
 # 构建数据字典索引（运行前必需）
 python -m dictionary.indexer demo/data_dict.csv
 
+# 构建银行数据字典（11 表/76 字段）
+python -m dictionary.indexer demo/bank_data_dict.csv
+
 # 运行需求分析
-python cli.py search --req demo/req_sample.txt --verbose    # 概念提取 + 分层检索
 python cli.py analyze --req demo/req_sample.txt             # 完整链路（概念→检索→伪代码）
 python cli.py analyze --req demo/req_sample.txt --sql       # 包含 SQL 生成
+python cli.py analyze --req demo/bank_req_aml.txt --dict demo/bank_data_dict.csv --sql  # 银行测试
 
-# 运行全部测试（292 tests，需设 DEEPSEEK_API_KEY）
+# 启动 Streamlit WebUI（用安全启动器，避免 BGE segfault）
+python run_ui.py
+# 或直接启动（可能遇到 BGE + CUDA 冲突 crash）
+streamlit run ui/app.py
+
+# 运行全部测试（294 tests，需设 DEEPSEEK_API_KEY）
 pytest tests/ -v
 
 # 运行单个测试文件

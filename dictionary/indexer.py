@@ -72,7 +72,8 @@ def build_index(
         data_dict: 结构化数据字典
         embedding_model: HuggingFace 模型名
         device: 推理设备
-        reset: True 时删除已有 Collection 重建
+        reset: True → 全量覆盖（upsert + 清理旧 ID），Collection 不存在则新建
+                False → 仅追加新 ID（已存在的 ID 会因 duplicate 报错）
 
     Returns:
         ChromaDB Collection 对象
@@ -85,14 +86,7 @@ def build_index(
         settings=ChromaSettings(anonymized_telemetry=False),
     )
 
-    # 重置
-    if reset:
-        try:
-            client.delete_collection(CHROMA_COLLECTION)
-        except Exception:
-            pass
-
-    # 获取或创建
+    # 获取或创建 Collection（不删库，保留元数据）
     collection = client.get_or_create_collection(
         name=CHROMA_COLLECTION,
         metadata={"description": "DataPilot 数据字典", "hnsw:space": "cosine"},
@@ -119,16 +113,34 @@ def build_index(
                 "referenced_table": col.referenced_table or "",
             })
 
+    if not ids:
+        return collection
+
+    # 覆盖模式：upsert 前记录旧 ID，写完清理不在新数据中的残留
+    old_ids: list[str] = []
+    if reset:
+        try:
+            old_ids = collection.get(limit=collection.count())["ids"]
+        except Exception:
+            pass
+
     # 批量生成 embedding
     embeddings = model.encode(documents, show_progress_bar=True)
 
-    # 写入
-    collection.add(
+    # upsert: 存在则更新，不存在则新增
+    collection.upsert(
         ids=ids,
         documents=documents,
         embeddings=[e.tolist() for e in embeddings],
         metadatas=metadatas,
     )
+
+    # 清理旧 ID（换字典时旧表残留）
+    if reset and old_ids:
+        new_id_set = set(ids)
+        stale_ids = [i for i in old_ids if i not in new_id_set]
+        if stale_ids:
+            collection.delete(ids=stale_ids)
 
     return collection
 

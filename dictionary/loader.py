@@ -32,6 +32,8 @@ COLUMN_MAP = {
     "relations": ["relations", "表关系", "关联表", "relations"],
     # 主键/外键
     "is_primary_key": ["is_primary_key", "主键", "isPrimaryKey"],
+    # 源系统（数据血缘）
+    "source_system": ["source_system", "源系统", "数据来源系统", "sourceSystem"],
 }
 
 
@@ -91,6 +93,7 @@ def load_dictionary(file_path: Union[str, Path]) -> DataDictionary:
         column_comment | 字段注释 — 字段描述
         code_values | 码值       — "01=活跃, 02=休眠"
         relations   | 表关系     — 关联表信息
+        source_system | 源系统   — 数据来源系统（如"核心银行系统"）
 
     最少必填列：layer, table_name, column_name
     """
@@ -98,7 +101,7 @@ def load_dictionary(file_path: Union[str, Path]) -> DataDictionary:
     suffix = file_path.suffix.lower()
 
     if suffix == ".csv":
-        df = pd.read_csv(file_path, encoding="utf-8")
+        df = pd.read_csv(file_path, encoding="utf-8-sig")
     elif suffix in (".xlsx", ".xls"):
         df = pd.read_excel(file_path)
     else:
@@ -118,6 +121,7 @@ def load_dictionary(file_path: Union[str, Path]) -> DataDictionary:
     col_code_values = _infer_column(columns, "code_values")
     col_relations = _infer_column(columns, "relations")
     col_is_pk = _infer_column(columns, "is_primary_key")
+    col_source_system = _infer_column(columns, "source_system")
 
     # 最少必填列校验
     missing = []
@@ -145,6 +149,7 @@ def load_dictionary(file_path: Union[str, Path]) -> DataDictionary:
             table_metas[key] = {
                 "layer": DataLayer(layer_raw),
                 "table_comment": str(row.get(col_table_comment, "")).strip() if col_table_comment and not pd.isna(row.get(col_table_comment)) else "",
+                "source_system": str(row.get(col_source_system, "")).strip() if col_source_system and not pd.isna(row.get(col_source_system)) else "",
             }
 
         col_name = str(row[col_column_name]).strip() if not pd.isna(row[col_column_name]) else ""
@@ -179,6 +184,7 @@ def load_dictionary(file_path: Union[str, Path]) -> DataDictionary:
             layer=meta["layer"],
             columns=[ColumnInfo(**c) for c in cols],
             source_file=str(file_path.name),
+            source_system=meta.get("source_system", ""),
         ))
 
     return DataDictionary(
