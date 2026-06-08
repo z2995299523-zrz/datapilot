@@ -25,7 +25,7 @@ get_embedding_model()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import dictionary, analysis, reconciliation, modeling
+from backend.routers import dictionary, analysis, reconciliation, modeling, auth, admin
 from backend.schemas import HealthResponse
 
 app = FastAPI(
@@ -54,6 +54,8 @@ app.include_router(dictionary.router)
 app.include_router(analysis.router)
 app.include_router(reconciliation.router)
 app.include_router(modeling.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health", response_model=HealthResponse)
